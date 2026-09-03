@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "RedactPDF",
+    "slug": "redactpdf",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "redactpdf",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0B0C"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.redactpdf.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "RedactPDF needs photo access to import scanned documents for redaction.",
+        "NSCameraUsageDescription": "RedactPDF can capture document photos for redaction."
+      }
+    },
+    "android": {
+      "package": "com.redactpdf.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0B0C",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-sharing",
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "RedactPDF needs photo access to import scanned documents for redaction."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

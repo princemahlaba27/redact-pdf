@@ -1,0 +1,35 @@
+name: redact_pdf
+description: Permanently redact sensitive data from PDFs — 100% on-device.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  file_picker: ^10.1.2
+  image_picker: ^1.1.2
+  path_provider: ^2.1.5
+  path: ^1.9.1
+  share_plus: ^11.0.0
+  google_mlkit_text_recognition: ^0.15.0
+  pdfrx: ^2.1.0
+  pdf: ^3.11.3
+  image: ^4.5.4
+  uuid: ^4.5.1
+  provider: ^6.1.5
+  url_launcher: ^6.3.1
+  shared_preferences: ^2.5.3
+  flutter_animate: ^4.5.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
