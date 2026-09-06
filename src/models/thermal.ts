@@ -19,7 +19,7 @@ export type ThermalThreat = {
   pageIndex: number;
 };
 
-export const THERMAL_SCAN_MS = 3000;
+export const THERMAL_SCAN_MS = 2500;
 
 export function threatToRedaction(threat: ThermalThreat): RedactionRect {
   return {

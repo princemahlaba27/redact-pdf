@@ -1,24 +1,29 @@
 import { ColorValue } from 'react-native';
 
-/** Apple HIG–inspired design tokens for RedactPDF. */
+/**
+ * Obsidian forensic vault palette — Zero-Trace Pixel Destruction.
+ * Surfaces: #0A0A0C · Dividers: #1F242F · High-contrast type.
+ */
 export const AppleDS = {
-  canvas: '#0B0B0C',
-  surface: '#0D0D0E',
-  surfaceElevated: '#141416',
-  surfaceGrouped: '#1C1C1E',
+  canvas: '#0A0A0C',
+  surface: '#0A0A0C',
+  surfaceElevated: '#101014',
+  surfaceGrouped: '#141418',
 
   labelPrimary: '#FFFFFF',
-  labelSecondary: 'rgba(255,255,255,0.62)',
-  labelTertiary: 'rgba(255,255,255,0.42)',
+  labelSecondary: 'rgba(255,255,255,0.68)',
+  labelTertiary: 'rgba(255,255,255,0.45)',
   labelQuaternary: 'rgba(255,255,255,0.28)',
 
-  separator: 'rgba(255,255,255,0.10)',
-  separatorOpaque: 'rgba(255,255,255,0.08)',
+  separator: '#1F242F',
+  separatorOpaque: '#1F242F',
 
   accent: '#0A85FF',
   accentMuted: 'rgba(10,133,255,0.18)',
   success: '#33D66B',
   successMuted: 'rgba(51,214,107,0.16)',
+  danger: '#FF3B30',
+  amber: '#E8A23A',
 
   spacing: { xxs: 4, xs: 8, sm: 12, md: 16, lg: 20, xl: 24, xxl: 32, xxxl: 40 },
   radius: { sm: 12, md: 16, lg: 20, xl: 24, icon: 14 },

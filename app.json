@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0B0B0C"
+      "backgroundColor": "#0A0A0C"
     },
     "ios": {
       "supportsTablet": true,
@@ -23,9 +23,9 @@
       }
     },
     "android": {
-      "package": "com.redactpdf.app",
+      "package": "com.princemahlaba.redactpdf",
       "adaptiveIcon": {
-        "backgroundColor": "#0B0B0C",
+        "backgroundColor": "#0A0A0C",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

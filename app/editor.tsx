@@ -4,7 +4,6 @@ import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -13,15 +12,16 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
 
 import { BurnScanline } from '../src/components/BurnScanline';
+import { PdfPageViewer } from '../src/components/PdfPageViewer';
+import { SecurityShieldBanner } from '../src/components/SecurityShieldBanner';
 import {
   FloatingToolbar,
   LoadingOverlay,
   ScreenBackground,
 } from '../src/components/ui';
-import { SecurityShieldBanner } from '../src/components/SecurityShieldBanner';
+import { useScreenProtection } from '../src/hooks/useScreenProtection';
 import type {
   NormalizedRect,
   RedactionMode,
@@ -33,7 +33,6 @@ import {
   REDACTION_STYLE_COLOR,
   REDACTION_STYLE_LABEL,
 } from '../src/models/redaction';
-import { useScreenProtection } from '../src/hooks/useScreenProtection';
 import { Haptic } from '../src/services/haptics';
 import {
   burnAndFlatten,
@@ -46,12 +45,12 @@ import { useSubscription } from '../src/services/subscription';
 import { useThermalSession } from '../src/services/thermalSession';
 import { AppleDS, typography } from '../src/theme/tokens';
 
-function sanitizationReport(count: number): string {
+function statusPillCopy(count: number): string {
   if (count <= 0) {
-    return 'Awaiting destruction • Metadata wipe armed (EXIF/Author/Revisions)';
+    return 'Sanitized: 0 Threats Neutralized • Metadata Wipe Armed';
   }
-  const threat = count === 1 ? '1 Threat Neutralized' : `${count} Threats Neutralized`;
-  return `Sanitized: ${threat} • Metadata Wiped (EXIF/Author/Revisions: Cleared)`;
+  const n = count === 1 ? '1 Threat Neutralized' : `${count} Threats Neutralized`;
+  return `Sanitized: ${n} • Metadata Wiped`;
 }
 
 export default function EditorScreen() {
@@ -98,12 +97,10 @@ export default function EditorScreen() {
     setLoadingDoc(true);
     void (async () => {
       try {
-        // Re-cache into a stable local path before WebView / pdf-lib access.
         const cached = await cachePdfUri(uri);
         if (cancelled) return;
         setRenderUri(cached);
-        const count = await getPdfPageCount(cached);
-        if (!cancelled) setPageCount(count);
+        setPageCount(await getPdfPageCount(cached));
       } catch {
         if (!cancelled) {
           setRenderUri(uri);
@@ -130,7 +127,7 @@ export default function EditorScreen() {
 
   const pulseBurnHaptic = useCallback(() => {
     const now = Date.now();
-    if (now - lastBurnPulse.current < 110) return;
+    if (now - lastBurnPulse.current < 120) return;
     lastBurnPulse.current = now;
     void Haptic.medium();
   }, []);
@@ -150,13 +147,12 @@ export default function EditorScreen() {
   const beginDraft = (rect: NormalizedRect) => {
     draftRef.current = rect;
     setDraft(rect);
-    void Haptic.medium();
   };
 
   const updateDraft = (rect: NormalizedRect | null) => {
     draftRef.current = rect;
     setDraft(rect);
-    if (rect && (rect.width > 0.01 || rect.height > 0.01)) {
+    if (rect && (rect.width > 0.012 || rect.height > 0.012)) {
       pulseBurnHaptic();
     }
   };
@@ -174,9 +170,12 @@ export default function EditorScreen() {
         .enabled(mode === 'manual')
         .onBegin((e) => {
           'worklet';
-          const x = e.x / canvasSize.width;
-          const y = e.y / canvasSize.height;
-          runOnJS(beginDraft)({ x, y, width: 0, height: 0 });
+          runOnJS(beginDraft)({
+            x: e.x / canvasSize.width,
+            y: e.y / canvasSize.height,
+            width: 0,
+            height: 0,
+          });
         })
         .onUpdate((e) => {
           'worklet';
@@ -282,15 +281,6 @@ export default function EditorScreen() {
   }
 
   const activeUri = renderUri ?? uri;
-  const pdfSource =
-    Platform.OS === 'android'
-      ? { uri: activeUri }
-      : {
-          html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1" />
-            <style>html,body{margin:0;height:100%;background:#0D0D0E}</style></head>
-            <body><embed src="${activeUri}" type="application/pdf" width="100%" height="100%" /></body></html>`,
-        };
-
   const draftPx = draft
     ? {
         left: draft.x * canvasSize.width,
@@ -299,6 +289,7 @@ export default function EditorScreen() {
         height: draft.height * canvasSize.height,
       }
     : null;
+  const displayTitle = (title || 'Document').replace(/\.pdf$/i, '');
 
   return (
     <ScreenBackground>
@@ -313,29 +304,28 @@ export default function EditorScreen() {
           >
             <Text style={typography.body}>Cancel</Text>
           </Pressable>
-          <Text style={[typography.footnoteMedium, styles.title]} numberOfLines={1}>
-            {title || 'Destruction Canvas'}
-          </Text>
+          <View style={styles.titleBlock}>
+            <Text style={styles.docTitle} numberOfLines={1}>
+              {displayTitle}.pdf
+            </Text>
+            <Text style={styles.pageMeta}>
+              Page {pageIndex + 1}/{pageCount}
+            </Text>
+          </View>
           <Pressable onPress={() => void onExportPress()} style={styles.exportBtn}>
-            <Text style={[typography.captionMedium, { color: '#fff' }]}>Export</Text>
+            <Text style={styles.exportText}>Export</Text>
           </Pressable>
         </View>
 
-        <View style={styles.reportBar}>
-          <Ionicons name="flame" size={14} color="#FF6A45" />
-          <Text style={styles.reportText} numberOfLines={2}>
-            {sanitizationReport(redactions.length)}
+        <View style={styles.statusPill}>
+          <View style={styles.statusDot} />
+          <Text style={styles.statusText} numberOfLines={2}>
+            {statusPillCopy(redactions.length)}
           </Text>
         </View>
 
         <View style={styles.canvas} onLayout={onCanvasLayout}>
-          <WebView
-            originWhitelist={['*']}
-            allowFileAccess
-            allowUniversalAccessFromFileURLs
-            style={styles.webview}
-            source={pdfSource}
-          />
+          <PdfPageViewer uri={activeUri} pageIndex={pageIndex} />
           <GestureDetector gesture={pan}>
             <View style={StyleSheet.absoluteFill} pointerEvents="box-only">
               {pageRedactions.map((r) => (
@@ -350,7 +340,7 @@ export default function EditorScreen() {
                       height: r.rect.height * canvasSize.height,
                       backgroundColor:
                         r.style === 'blur'
-                          ? 'rgba(80,80,80,0.75)'
+                          ? 'rgba(80,80,80,0.82)'
                           : REDACTION_STYLE_COLOR[r.style],
                     },
                   ]}
@@ -366,7 +356,9 @@ export default function EditorScreen() {
                       width: draftPx.width,
                       height: draftPx.height,
                       backgroundColor: REDACTION_STYLE_COLOR[style],
-                      opacity: 0.88,
+                      opacity: 0.9,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255,72,42,0.55)',
                     },
                   ]}
                 >
@@ -385,6 +377,7 @@ export default function EditorScreen() {
           <Pressable
             disabled={pageIndex <= 0}
             onPress={() => setPageIndex((p) => Math.max(0, p - 1))}
+            hitSlop={10}
           >
             <Ionicons
               name="chevron-back"
@@ -398,6 +391,7 @@ export default function EditorScreen() {
           <Pressable
             disabled={pageIndex >= pageCount - 1}
             onPress={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+            hitSlop={10}
           >
             <Ionicons
               name="chevron-forward"
@@ -460,13 +454,13 @@ export default function EditorScreen() {
             </Pressable>
           </View>
           <Text style={[typography.caption, { marginTop: 6, textAlign: 'center' }]}>
-            Destruction style: {REDACTION_STYLE_LABEL[style]}
+            Tool: {REDACTION_STYLE_LABEL[style]}
           </Text>
         </FloatingToolbar>
       </SafeAreaView>
 
       {loadingDoc ? <LoadingOverlay message="Opening vault artifact…" /> : null}
-      {detecting ? <LoadingOverlay message="Scanning for threat signatures…" /> : null}
+      {detecting ? <LoadingOverlay message="Scanning threat signatures…" /> : null}
       {exporting ? <LoadingOverlay message="Burning pixels & wiping metadata…" /> : null}
       <SecurityShieldBanner visible={bannerVisible} onDismiss={dismissBanner} />
     </ScreenBackground>
@@ -480,42 +474,65 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: AppleDS.separator,
   },
-  title: { flex: 1, textAlign: 'center' },
-  reportBar: {
+  titleBlock: { flex: 1, alignItems: 'center' },
+  docTitle: {
+    ...typography.captionMedium,
+    color: AppleDS.labelPrimary,
+  },
+  pageMeta: {
+    ...typography.caption,
+    marginTop: 2,
+    color: AppleDS.labelTertiary,
+  },
+  statusPill: {
     marginHorizontal: 16,
+    marginTop: 10,
     marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: 'rgba(255, 72, 42, 0.08)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 72, 42, 0.28)',
+    backgroundColor: 'rgba(51,214,107,0.06)',
+    borderWidth: 1,
+    borderColor: AppleDS.separator,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  reportText: {
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: AppleDS.success,
+  },
+  statusText: {
     ...typography.captionMedium,
     flex: 1,
-    color: 'rgba(255, 210, 196, 0.92)',
+    color: 'rgba(200,255,220,0.92)',
     lineHeight: 16,
   },
   exportBtn: {
     backgroundColor: AppleDS.accent,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 100,
+    borderRadius: 10,
+  },
+  exportText: {
+    ...typography.captionMedium,
+    color: '#fff',
   },
   canvas: {
     flex: 1,
     marginHorizontal: 8,
     borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: AppleDS.surface,
+    backgroundColor: AppleDS.surfaceElevated,
+    borderWidth: 1,
+    borderColor: AppleDS.separator,
   },
-  webview: { flex: 1, backgroundColor: AppleDS.surface },
   rect: { position: 'absolute', overflow: 'hidden' },
   pageRow: {
     flexDirection: 'row',
@@ -533,17 +550,20 @@ const styles = StyleSheet.create({
   seg: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 100,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: AppleDS.separator,
   },
   segActive: {
     backgroundColor: AppleDS.accentMuted,
+    borderColor: 'rgba(10,133,255,0.4)',
   },
   styleDotWrap: { padding: 4 },
   styleDot: {
     width: 22,
     height: 22,
-    borderRadius: 11,
+    borderRadius: 4,
     borderWidth: 1,
     borderColor: AppleDS.separator,
   },

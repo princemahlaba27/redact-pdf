@@ -6,14 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppleDS, typography } from '../theme/tokens';
 
 const MESSAGE =
-  'Security Shield Active: Screenshots disabled to protect sensitive unredacted data. Use Export to generate a sanitized file.';
+  "🛡️ Security Shield Active: Screenshots are disabled to protect unredacted sensitive data. Tap 'Export' to generate a sanitized file.";
 
 type Props = {
   visible: boolean;
   onDismiss: () => void;
 };
 
-/** Obsidian privacy toast shown when a screenshot attempt is detected. */
+/** High-contrast privacy toast when a screenshot attempt is detected. */
 export function SecurityShieldBanner({ visible, onDismiss }: Props) {
   const insets = useSafeAreaInsets();
   const opacity = useRef(new Animated.Value(0)).current;
@@ -82,14 +82,9 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 14,
     borderRadius: AppleDS.radius.md,
-    backgroundColor: '#121214',
+    backgroundColor: '#101014',
     borderWidth: 1,
-    borderColor: 'rgba(51,214,107,0.28)',
-    shadowColor: '#000',
-    shadowOpacity: 0.45,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    borderColor: 'rgba(51,214,107,0.32)',
   },
   iconWrap: {
     width: 36,

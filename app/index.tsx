@@ -85,7 +85,7 @@ export default function DashboardScreen() {
             <Ionicons name="shield-checkmark" size={22} color={AppleDS.accent} />
             <Text style={[typography.navBrand, { marginLeft: 8 }]}>RedactPDF</Text>
           </View>
-          <Badge text="Audit Shield On" />
+          <Badge text="Vault Shield On" />
         </View>
 
         <ScrollView

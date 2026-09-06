@@ -168,8 +168,13 @@ export async function detectPiiInPdf(
 }
 
 export async function readPdfBytes(uri: string): Promise<Uint8Array> {
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+  const base64 = await readPdfAsBase64(uri);
   return base64ToBytes(base64);
+}
+
+/** Base64 PDF payload for offline WebView / pdf.js canvas rendering. */
+export async function readPdfAsBase64(uri: string): Promise<string> {
+  return FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
 }
 
 function base64ToBytes(base64: string): Uint8Array {

@@ -15,16 +15,16 @@ type Classified = { kind: ThermalThreatKind; label: string; risk: number };
 
 function classifyMatch(value: string, kindHint?: ThermalThreatKind): Classified {
   if (kindHint === 'ssn' || SSN.test(value)) {
-    return { kind: 'ssn', label: 'SSN DETECTED', risk: 94 };
+    return { kind: 'ssn', label: 'SSN / ID DETECTED', risk: 94 };
   }
   if (kindHint === 'balance' || BALANCE.test(value)) {
-    return { kind: 'balance', label: 'ACCOUNT BALANCE', risk: 91 };
+    return { kind: 'balance', label: 'FINANCIAL BALANCE DETECTED', risk: 91 };
   }
   if (kindHint === 'address' || ADDRESS.test(value)) {
-    return { kind: 'address', label: 'HOME ADDRESS', risk: 88 };
+    return { kind: 'address', label: 'HOME ADDRESS EXPOSED', risk: 88 };
   }
   if (kindHint === 'card') {
-    return { kind: 'card', label: 'PAYMENT CREDENTIAL', risk: 96 };
+    return { kind: 'card', label: 'PAYMENT CREDENTIAL DETECTED', risk: 96 };
   }
   if (kindHint === 'email' || EMAIL.test(value)) {
     return { kind: 'email', label: 'EMAIL EXPOSED', risk: 72 };
@@ -32,7 +32,7 @@ function classifyMatch(value: string, kindHint?: ThermalThreatKind): Classified 
   if (kindHint === 'phone' || PHONE.test(value)) {
     return { kind: 'phone', label: 'PHONE VISIBLE', risk: 68 };
   }
-  return { kind: 'metadata', label: 'METADATA TRACE', risk: 81 };
+  return { kind: 'metadata', label: 'EXIF / AUTHOR METADATA EXPOSED', risk: 81 };
 }
 
 function riskSuffix(kind: ThermalThreatKind, risk: number): string {
@@ -58,7 +58,7 @@ function theatricalFallback(): ThermalThreat[] {
     {
       id: uuidv4(),
       kind: 'ssn',
-      label: `SSN DETECTED: 94% RISK`,
+      label: `[SSN / ID DETECTED]`,
       risk: 94,
       pageIndex: 0,
       rect: { x: 0.12, y: 0.22, width: 0.52, height: 0.055 },
@@ -66,15 +66,15 @@ function theatricalFallback(): ThermalThreat[] {
     {
       id: uuidv4(),
       kind: 'balance',
-      label: 'ACCOUNT BALANCE: EXPOSED',
+      label: '[FINANCIAL BALANCE DETECTED]',
       risk: 91,
       pageIndex: 0,
       rect: { x: 0.18, y: 0.42, width: 0.58, height: 0.05 },
     },
     {
       id: uuidv4(),
-      kind: 'address',
-      label: 'HOME ADDRESS: VISIBLE IN METADATA',
+      kind: 'metadata',
+      label: '[EXIF / AUTHOR METADATA EXPOSED]',
       risk: 88,
       pageIndex: 0,
       rect: { x: 0.1, y: 0.62, width: 0.7, height: 0.06 },
@@ -146,7 +146,7 @@ export async function buildThermalThreats(pdfUri: string): Promise<ThermalThreat
       found.push({
         id: uuidv4(),
         kind: 'metadata',
-        label: 'HOME ADDRESS: VISIBLE IN METADATA',
+        label: '[EXIF / AUTHOR METADATA EXPOSED]',
         risk: 86,
         pageIndex: 0,
         rect: { x: 0.12, y: 0.74, width: 0.7, height: 0.05 },

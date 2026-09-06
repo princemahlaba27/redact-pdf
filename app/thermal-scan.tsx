@@ -3,17 +3,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   LayoutChangeEvent,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
-
+import { PdfPageViewer } from '../src/components/PdfPageViewer';
 import { ThermalTargetBracket } from '../src/components/ThermalTargetBracket';
 import { ScreenBackground } from '../src/components/ui';
+import { useScreenProtection } from '../src/hooks/useScreenProtection';
 import type { ThermalThreat } from '../src/models/thermal';
 import { THERMAL_SCAN_MS, threatToRedaction } from '../src/models/thermal';
 import { Haptic } from '../src/services/haptics';
@@ -34,6 +33,7 @@ export default function ThermalScanScreen() {
   const title = Array.isArray(params.title) ? params.title[0] : params.title;
 
   const seedFromBurn = useThermalSession((s) => s.seedFromBurn);
+  useScreenProtection(true);
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [threats, setThreats] = useState<ThermalThreat[]>([]);
@@ -163,16 +163,6 @@ export default function ThermalScanScreen() {
     }, 2100);
   };
 
-  const pdfSource = useMemo(() => {
-    if (!uri) return { uri: '' };
-    if (Platform.OS === 'android') return { uri };
-    return {
-      html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>html,body{margin:0;height:100%;background:#0D0D0E}</style></head>
-        <body><embed src="${uri}" type="application/pdf" width="100%" height="100%" /></body></html>`,
-    };
-  }, [uri]);
-
   const laserTranslate = laserY.interpolate({
     inputRange: [0, 1],
     outputRange: [0, Math.max(canvas.height - 4, 0)],
@@ -189,16 +179,7 @@ export default function ThermalScanScreen() {
         </View>
 
         <View style={styles.stage} onLayout={onLayout}>
-          {uri ? (
-            <WebView
-              originWhitelist={['*']}
-              allowFileAccess
-              allowUniversalAccessFromFileURLs
-              style={styles.webview}
-              source={pdfSource}
-              pointerEvents="none"
-            />
-          ) : null}
+          {uri ? <PdfPageViewer uri={uri} pageIndex={0} /> : null}
 
           <View style={styles.heatVeil} pointerEvents="none" />
 
@@ -231,8 +212,8 @@ export default function ThermalScanScreen() {
 
           {phase === 'shredded' ? (
             <Animated.View style={[styles.shredBanner, { opacity: shredOpacity }]}>
-              <Text style={styles.shredTitle}>Metadata Shredded.</Text>
-              <Text style={styles.shredSub}>0 Bytes Recoverable.</Text>
+              <Text style={styles.shredTitle}>0 Bytes Recoverable • Pixels Flattened</Text>
+              <Text style={styles.shredSub}>Threats permanently burned into the vault artifact.</Text>
             </Animated.View>
           ) : null}
         </View>

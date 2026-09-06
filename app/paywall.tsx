@@ -20,8 +20,8 @@ import { AppleDS, typography } from '../src/theme/tokens';
 
 const BENEFITS = [
   'Permanent Pixel Destruction (Zero OCR Recovery)',
-  'Deep Metadata Stripping (Removes Author & GPS)',
-  'AirPrint & Encrypted PDF Sharing',
+  'Deep Metadata Stripping (Removes Author, GPS & Revisions)',
+  'AirPrint & Encrypted Document Sharing',
 ] as const;
 
 function BenefitRow({ text }: { text: string }) {
@@ -130,7 +130,7 @@ export default function PaywallScreen() {
           </View>
 
           <PrimaryButton
-            title="SANITIZE & EXPORT ($0.49)"
+            title="Sanitize & Export — $0.49"
             onPress={() => void onPrimaryPurchase()}
             loading={isLoading && !showDownsell}
             style={styles.cta}
@@ -181,12 +181,12 @@ export default function PaywallScreen() {
               Wait — Don&apos;t Leave Your Document Exposed
             </Text>
             <Text style={styles.downsellBody}>
-              Need more time to evaluate? We&apos;ve extended your security clearance.
+              Need more time? Your security clearance has been extended.
             </Text>
 
             <View style={styles.extendedCard}>
               <Text style={styles.offerEyebrow}>EXTENDED EVALUATION</Text>
-              <Text style={styles.offerTitle}>14 Days Extended Evaluation</Text>
+              <Text style={styles.offerTitle}>14-Day Extended Evaluation</Text>
               <Text style={styles.extendedPrice}>$0.00 Due Today</Text>
               <Text style={styles.extendedFine}>
                 Renews at standard $9.99/week after 14 days. Cancel anytime.
@@ -194,7 +194,7 @@ export default function PaywallScreen() {
             </View>
 
             <PrimaryButton
-              title="START 14-DAY CLEARANCE ($0.00)"
+              title="Claim 14 Days Free & Export"
               onPress={() => void onExtendedPurchase()}
               loading={isLoading}
               style={styles.cta}
