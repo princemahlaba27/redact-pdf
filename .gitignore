@@ -53,3 +53,5 @@ archive/flutter/.dart_tool/
 archive/flutter/build/
 archive/flutter/.flutter-plugins-dependencies
 archive/flutter/**/gradle-wrapper.jar
+archive/flutter/android/
+archive/flutter/ios/
