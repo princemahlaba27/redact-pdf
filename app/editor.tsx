@@ -56,9 +56,9 @@ import { AppleDS, typography } from '../src/theme/tokens';
 
 function statusCopy(total: number, selected: number): string {
   if (total <= 0) {
-    return 'No private details found · Document details erased on export';
+    return '0 Items Hidden · Document Details Erased on export';
   }
-  return `${selected}/${total} items hidden · Document details erased on export`;
+  return `${selected}/${total} Items Hidden · Document Details Erased on export`;
 }
 
 export default function EditorScreen() {

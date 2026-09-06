@@ -31,6 +31,21 @@ export type ThreatBadge =
   | 'Date'
   | 'Private Field';
 
+/** Plain badge aliases used in the checklist UI. */
+export const THREAT_BADGE_LABEL: Record<ThreatBadge, string> = {
+  Balance: 'Balance',
+  'Account Number': 'Account Number',
+  Card: 'Card',
+  Phone: 'Phone',
+  Email: 'Email',
+  SSN: 'SSN',
+  'ID Number': 'ID Number',
+  Name: 'Name',
+  Address: 'Address',
+  Date: 'Date',
+  'Private Field': 'Private Field',
+};
+
 export type ThreatItem = {
   id: string;
   category: ThreatCategory;
