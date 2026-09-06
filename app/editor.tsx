@@ -52,6 +52,12 @@ import {
   threatsToRedactions,
 } from '../src/services/threatClassifier';
 import { AppleDS, typography } from '../src/theme/tokens';
+import {
+  computeAspectFit,
+  mapPageRectToScreen,
+  mapScreenRectToPage,
+  type PageFit,
+} from '../src/utils/pageFit';
 
 function statusCopy(total: number, selected: number): string {
   if (total <= 0) {
@@ -84,6 +90,7 @@ export default function EditorScreen() {
   const [exporting, setExporting] = useState(false);
   const [loadingDoc, setLoadingDoc] = useState(true);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
+  const [pageNatural, setPageNatural] = useState({ width: 1, height: 1 });
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
   const lastBurnPulse = useRef(0);
@@ -131,6 +138,23 @@ export default function EditorScreen() {
   );
 
   const selectedCount = threats.filter((t) => t.enabled).length;
+
+  /** Aspect-fit page frame inside the canvas — keeps blackouts glued to glyphs. */
+  const pageFit: PageFit = useMemo(
+    () =>
+      computeAspectFit(
+        pageNatural.width,
+        pageNatural.height,
+        canvasSize.width,
+        canvasSize.height,
+      ),
+    [pageNatural.width, pageNatural.height, canvasSize.width, canvasSize.height],
+  );
+
+  const toScreen = useCallback(
+    (rect: NormalizedRect) => mapPageRectToScreen(rect, pageFit),
+    [pageFit],
+  );
 
   const onTokensExtracted = useCallback((tokens: TextToken[], pages: number) => {
     if (pages > 0) setPageCount(pages);
@@ -191,37 +215,41 @@ export default function EditorScreen() {
     if (current) addManualRedaction(current);
   };
 
+  const syncDraftFromScreen = useCallback(
+    (x0: number, y0: number, x1: number, y1: number) => {
+      const pageRect = mapScreenRectToPage(
+        {
+          x: Math.min(x0, x1),
+          y: Math.min(y0, y1),
+          width: Math.abs(x1 - x0),
+          height: Math.abs(y1 - y0),
+        },
+        pageFit,
+      );
+      updateDraft(pageRect);
+    },
+    [pageFit],
+  );
+
   const pan = useMemo(
     () =>
       Gesture.Pan()
         .enabled(mode === 'manual')
         .onBegin((e) => {
           'worklet';
-          runOnJS(beginDraft)({
-            x: e.x / canvasSize.width,
-            y: e.y / canvasSize.height,
-            width: 0,
-            height: 0,
-          });
+          runOnJS(syncDraftFromScreen)(e.x, e.y, e.x, e.y);
         })
         .onUpdate((e) => {
           'worklet';
-          const x1 = e.x / canvasSize.width;
-          const y1 = e.y / canvasSize.height;
-          const x0 = (e.x - e.translationX) / canvasSize.width;
-          const y0 = (e.y - e.translationY) / canvasSize.height;
-          runOnJS(updateDraft)({
-            x: Math.min(x0, x1),
-            y: Math.min(y0, y1),
-            width: Math.abs(x1 - x0),
-            height: Math.abs(y1 - y0),
-          });
+          const x0 = e.x - e.translationX;
+          const y0 = e.y - e.translationY;
+          runOnJS(syncDraftFromScreen)(x0, y0, e.x, e.y);
         })
         .onEnd(() => {
           'worklet';
           runOnJS(commitDraft)();
         }),
-    [mode, canvasSize.width, canvasSize.height, addManualRedaction, pulseBurnHaptic],
+    [mode, syncDraftFromScreen],
   );
 
   const onModeChange = async (next: RedactionMode) => {
@@ -233,19 +261,11 @@ export default function EditorScreen() {
     }
   };
 
+  /** Undo only pops user-drawn boxes — OCR checklist items stay intact. */
   const undo = async () => {
-    if (manualRedactions.length) {
-      setManualRedactions((prev) => prev.slice(0, -1));
-    } else {
-      setThreats((prev) => {
-        const armed = [...prev].reverse().find((t) => t.enabled);
-        if (!armed) return prev;
-        return prev.map((t) =>
-          t.id === armed.id ? { ...t, enabled: false } : t,
-        );
-      });
-    }
-    await Haptic.selection();
+    if (manualRedactions.length === 0) return;
+    setManualRedactions((prev) => prev.slice(0, -1));
+    await Haptic.light();
   };
 
   const doExport = useCallback(async () => {
@@ -340,14 +360,7 @@ export default function EditorScreen() {
   }
 
   const activeUri = renderUri ?? uri;
-  const draftPx = draft
-    ? {
-        left: draft.x * canvasSize.width,
-        top: draft.y * canvasSize.height,
-        width: draft.width * canvasSize.width,
-        height: draft.height * canvasSize.height,
-      }
-    : null;
+  const draftPx = draft ? toScreen(draft) : null;
   const displayTitle = (title || 'Document').replace(/\.pdf$/i, '');
 
   return (
@@ -396,6 +409,9 @@ export default function EditorScreen() {
             uri={activeUri}
             pageIndex={pageIndex}
             onTokensExtracted={onTokensExtracted}
+            onPageFit={(fit) =>
+              setPageNatural({ width: fit.pageWidth, height: fit.pageHeight })
+            }
           />
           <GestureDetector gesture={pan}>
             <View style={StyleSheet.absoluteFill} pointerEvents="box-only">
@@ -405,10 +421,10 @@ export default function EditorScreen() {
                   style={[
                     styles.rect,
                     {
-                      left: r.rect.x * canvasSize.width,
-                      top: r.rect.y * canvasSize.height,
-                      width: r.rect.width * canvasSize.width,
-                      height: r.rect.height * canvasSize.height,
+                      left: toScreen(r.rect).left,
+                      top: toScreen(r.rect).top,
+                      width: toScreen(r.rect).width,
+                      height: toScreen(r.rect).height,
                       backgroundColor:
                         r.style === 'blur'
                           ? 'rgba(80,80,80,0.82)'
@@ -521,13 +537,13 @@ export default function EditorScreen() {
 
             <Pressable
               onPress={() => void undo()}
-              disabled={redactions.length === 0}
+              disabled={manualRedactions.length === 0}
             >
               <Ionicons
                 name="arrow-undo"
                 size={18}
                 color={
-                  redactions.length === 0
+                  manualRedactions.length === 0
                     ? AppleDS.labelQuaternary
                     : 'rgba(255,255,255,0.85)'
                 }

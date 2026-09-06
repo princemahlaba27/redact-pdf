@@ -196,12 +196,27 @@ export function buildPdfBridgeHtml(): string {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      // Aspect-fit metrics for RN overlay sync (letterboxing offsets).
+      var cssW = viewport.width / 2;
+      var cssH = viewport.height / 2;
+      var stageW = stage.clientWidth || 1;
+      var stageH = stage.clientHeight || 1;
+      var fitOffX = Math.max(0, (stageW - cssW) / 2);
+      var fitOffY = Math.max(0, (stageH - cssH) / 2);
       post('rendered', {
         page: pageNum,
         pages: pdfDoc.numPages,
         rotate: page.rotate || 0,
         width: viewport.width,
-        height: viewport.height
+        height: viewport.height,
+        pageWidth: base.width,
+        pageHeight: base.height,
+        stageWidth: stageW,
+        stageHeight: stageH,
+        renderWidth: cssW,
+        renderHeight: cssH,
+        offsetX: fitOffX,
+        offsetY: fitOffY
       });
     }
 

@@ -111,7 +111,7 @@ export function PrimaryButton({
       {loading ? (
         <ActivityIndicator color="#fff" />
       ) : (
-        <Text style={[typography.headline, { color: '#fff' }]}>{title}</Text>
+        <Text style={styles.primaryBtnText}>{title}</Text>
       )}
     </Pressable>
   );
@@ -229,11 +229,19 @@ const styles = StyleSheet.create({
     borderColor: AppleDS.separatorOpaque,
   },
   primaryBtn: {
-    height: AppleDS.layout.minTouch + 6,
-    borderRadius: AppleDS.radius.md,
-    backgroundColor: AppleDS.accent,
+    backgroundColor: '#007AFF',
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    minHeight: 58,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  primaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   toolbar: {
     marginHorizontal: 16,

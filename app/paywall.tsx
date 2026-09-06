@@ -208,7 +208,7 @@ export default function PaywallScreen() {
               title="Start 14-Day Free Evaluation"
               onPress={() => void onExtendedPurchase()}
               loading={isLoading}
-              style={styles.cta}
+              style={styles.downsellCta}
             />
             <Pressable
               onPress={() => void dismissDownsellHard()}
@@ -319,6 +319,11 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   cta: { marginTop: 22 },
+  downsellCta: {
+    marginTop: 16,
+    marginHorizontal: 16,
+    alignSelf: 'stretch',
+  },
   links: {
     marginTop: 20,
     flexDirection: 'row',

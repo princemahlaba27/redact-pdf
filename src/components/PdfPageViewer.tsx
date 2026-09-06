@@ -14,6 +14,7 @@ import type { TextToken } from '../models/threat';
 import { buildPdfBridgeHtml } from '../services/pdfBridgeHtml';
 import { readPdfAsBase64 } from '../services/redactionEngine';
 import { AppleDS } from '../theme/tokens';
+import type { PageFit } from '../utils/pageFit';
 
 type Props = {
   uri: string;
@@ -21,6 +22,8 @@ type Props = {
   style?: object;
   /** Fired once per document load with every line token (UI-space rects). */
   onTokensExtracted?: (tokens: TextToken[], pageCount: number) => void;
+  /** Fired on every paint with the aspect-fit frame inside the WebView. */
+  onPageFit?: (fit: PageFit) => void;
 };
 
 export type BurnedPageRaster = {
@@ -37,7 +40,7 @@ export type PdfPageViewerHandle = {
 
 type BridgeMessage =
   | { type: 'ready' }
-  | { type: 'rendered'; page: number; pages: number; rotate?: number }
+  | { type: 'rendered'; page: number; pages: number; rotate?: number; pageWidth?: number; pageHeight?: number; stageWidth?: number; stageHeight?: number; renderWidth?: number; renderHeight?: number; offsetX?: number; offsetY?: number }
   | { type: 'tokens'; tokens: TextToken[]; pages: number }
   | { type: 'burned'; pages: BurnedPageRaster[] }
   | { type: 'error'; message: string };
@@ -48,12 +51,14 @@ type BridgeMessage =
  * line tokens in top-left normalized UI coordinates.
  */
 export const PdfPageViewer = forwardRef<PdfPageViewerHandle, Props>(
-  function PdfPageViewer({ uri, pageIndex, style, onTokensExtracted }, ref) {
+  function PdfPageViewer({ uri, pageIndex, style, onTokensExtracted, onPageFit }, ref) {
     const [base64, setBase64] = useState<string | null>(null);
     const [ready, setReady] = useState(false);
     const webRef = useRef<WebView>(null);
     const tokensCb = useRef(onTokensExtracted);
     tokensCb.current = onTokensExtracted;
+    const pageFitCb = useRef(onPageFit);
+    pageFitCb.current = onPageFit;
     const lastUri = useRef<string | null>(null);
     const burnResolver = useRef<{
       resolve: (pages: BurnedPageRaster[]) => void;
@@ -126,6 +131,29 @@ export const PdfPageViewer = forwardRef<PdfPageViewerHandle, Props>(
         if (msg.type === 'ready') {
           setReady(true);
           if (base64) injectLoad(base64, pageIndex + 1);
+          return;
+        }
+        if (msg.type === 'rendered') {
+          if (
+            typeof msg.pageWidth === 'number' &&
+            typeof msg.pageHeight === 'number' &&
+            typeof msg.offsetX === 'number' &&
+            typeof msg.offsetY === 'number' &&
+            typeof msg.renderWidth === 'number' &&
+            typeof msg.renderHeight === 'number'
+          ) {
+            // Scale WebView CSS-pixel fit into the RN layout box when they differ.
+            pageFitCb.current?.({
+              pageWidth: msg.pageWidth,
+              pageHeight: msg.pageHeight,
+              offsetX: msg.offsetX,
+              offsetY: msg.offsetY,
+              renderWidth: msg.renderWidth,
+              renderHeight: msg.renderHeight,
+              containerWidth: msg.stageWidth ?? msg.renderWidth,
+              containerHeight: msg.stageHeight ?? msg.renderHeight,
+            });
+          }
           return;
         }
         if (msg.type === 'tokens') {

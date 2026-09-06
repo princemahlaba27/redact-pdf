@@ -16,8 +16,9 @@ import { cachePdfUri, imagesToPdf } from '../src/services/redactionEngine';
 import { AppleDS, typography } from '../src/theme/tokens';
 
 /**
- * Home dashboard — vertically centered header + actions, privacy footer
- * pinned above the home indicator (image_14 layout fix).
+ * Home dashboard — title at top with breathing room, action cards centered
+ * in the remaining space, privacy note pinned above the home indicator
+ * (image_15 layout polish).
  */
 export default function DashboardScreen() {
   const router = useRouter();
@@ -85,14 +86,14 @@ export default function DashboardScreen() {
   return (
     <ScreenBackground>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
-        <View style={styles.centerColumn}>
-          <View style={styles.header}>
-            <Text style={typography.navBrand}>Redact PDF</Text>
-            <Text style={styles.subtitle}>
-              Select a document to hide private details.
-            </Text>
-          </View>
+        <View style={styles.header}>
+          <Text style={typography.navBrand}>Redact PDF</Text>
+          <Text style={styles.subtitle}>
+            Select a document to hide private details.
+          </Text>
+        </View>
 
+        <View style={styles.centerColumn}>
           <View style={styles.actions}>
             <ActionCard
               icon="document-text"
@@ -131,21 +132,23 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
   },
-  centerColumn: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'stretch',
-    paddingHorizontal: AppleDS.layout.screenPadding,
-  },
   header: {
     alignItems: 'center',
-    marginBottom: 32,
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 8,
   },
   subtitle: {
     ...typography.body,
     marginTop: 10,
     textAlign: 'center',
     paddingHorizontal: 12,
+  },
+  centerColumn: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'stretch',
+    paddingHorizontal: 24,
   },
   actions: {
     width: '100%',
@@ -155,8 +158,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingHorizontal: AppleDS.layout.screenPadding,
-    paddingBottom: 12,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
     paddingTop: 8,
   },
   footerText: {
