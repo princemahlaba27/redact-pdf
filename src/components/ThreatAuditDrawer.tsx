@@ -87,7 +87,7 @@ export function ThreatAuditDrawer({
 
           <View style={styles.masterRow}>
             <Text style={styles.masterLabel}>
-              {allOn ? 'Uncheck All' : 'Select All'}
+              {allOn ? 'Deselect All' : 'Select All'}
             </Text>
             <Pressable
               onPress={() => {
@@ -97,7 +97,7 @@ export function ThreatAuditDrawer({
               style={styles.masterBtn}
             >
               <Text style={styles.masterBtnText}>
-                {allOn ? 'Uncheck All' : 'Select All'}
+                {allOn ? 'Deselect All' : 'Select All'}
               </Text>
             </Pressable>
           </View>
@@ -159,17 +159,13 @@ export function ThreatAuditDrawer({
                         />
                       </Pressable>
                       <View style={styles.rowCopy}>
+                        <Text style={styles.rowBadgeInline}>{item.badge}</Text>
                         <Text style={styles.rowText} numberOfLines={2}>
-                          {item.text}
+                          {item.displayText || item.text}
                         </Text>
-                        <View style={styles.metaRow}>
-                          <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{item.badge}</Text>
-                          </View>
-                          <Text style={styles.rowMeta}>
-                            Page {item.pageIndex + 1}
-                          </Text>
-                        </View>
+                        <Text style={styles.rowMeta}>
+                          Page {item.pageIndex + 1}
+                        </Text>
                       </View>
                     </Pressable>
                   ))}
@@ -283,30 +279,18 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
   checkHit: { padding: 2 },
-  rowCopy: { flex: 1 },
+  rowCopy: { flex: 1, gap: 4 },
+  rowBadgeInline: {
+    ...typography.captionMedium,
+    color: AppleDS.labelTertiary,
+  },
   rowText: {
     ...typography.footnoteMedium,
     color: AppleDS.labelPrimary,
     fontSize: 15,
   },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 6,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: AppleDS.labelSecondary,
-  },
   rowMeta: {
     ...typography.caption,
+    color: AppleDS.labelQuaternary,
   },
 });

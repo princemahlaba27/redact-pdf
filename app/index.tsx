@@ -2,7 +2,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -15,6 +15,10 @@ import { Haptic } from '../src/services/haptics';
 import { cachePdfUri, imagesToPdf } from '../src/services/redactionEngine';
 import { AppleDS, typography } from '../src/theme/tokens';
 
+/**
+ * Home dashboard — vertically centered header + actions, privacy footer
+ * pinned above the home indicator (image_14 layout fix).
+ */
 export default function DashboardScreen() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -39,7 +43,10 @@ export default function DashboardScreen() {
     try {
       const cachedUri = await cachePdfUri(asset.uri);
       await Haptic.success();
-      openThermalScan(cachedUri, asset.name?.replace(/\.pdf$/i, '') || 'Document');
+      openThermalScan(
+        cachedUri,
+        asset.name?.replace(/\.pdf$/i, '') || 'Document',
+      );
     } catch {
       await Haptic.error();
     } finally {
@@ -76,46 +83,43 @@ export default function DashboardScreen() {
 
   return (
     <ScreenBackground>
-      <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
-        <View style={styles.nav}>
-          <Text style={typography.navBrand}>Redact PDF</Text>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
-          <Text style={styles.subtitle}>
-            Select a document to hide private details.
-          </Text>
-
-          <View style={{ height: 28 }} />
-          <ActionCard
-            icon="document-text"
-            title="Select Document"
-            subtitle="PDF files, statements, tax forms"
-            isPrimary
-            onPress={busy ? () => undefined : onOpenPdf}
-          />
-          <View style={{ height: 12 }} />
-          <ActionCard
-            icon="camera"
-            title="Select Photo or Scan"
-            subtitle="Images, screenshots, camera scans"
-            onPress={busy ? () => undefined : onOpenPhotos}
-          />
-
-          <View style={styles.privacyNote}>
-            <Ionicons
-              name="lock-closed"
-              size={14}
-              color={AppleDS.labelTertiary}
-            />
-            <Text style={styles.privacyText}>
-              Your documents never leave your phone.
+      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
+        <View style={styles.centerColumn}>
+          <View style={styles.header}>
+            <Text style={typography.navBrand}>Redact PDF</Text>
+            <Text style={styles.subtitle}>
+              Select a document to hide private details.
             </Text>
           </View>
-        </ScrollView>
+
+          <View style={styles.actions}>
+            <ActionCard
+              icon="document-text"
+              title="Select Document"
+              subtitle="PDF files, statements, tax forms"
+              isPrimary
+              onPress={busy ? () => undefined : onOpenPdf}
+            />
+            <View style={{ height: 16 }} />
+            <ActionCard
+              icon="camera"
+              title="Select Photo or Scan"
+              subtitle="Images, screenshots, camera scans"
+              onPress={busy ? () => undefined : onOpenPhotos}
+            />
+          </View>
+        </View>
+
+        <View style={styles.footer}>
+          <Ionicons
+            name="lock-closed"
+            size={14}
+            color={AppleDS.labelTertiary}
+          />
+          <Text style={styles.footerText}>
+            Your documents never leave your phone.
+          </Text>
+        </View>
       </SafeAreaView>
       {busy ? <LoadingOverlay message="Opening document…" /> : null}
     </ScreenBackground>
@@ -123,28 +127,38 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  nav: {
-    paddingHorizontal: AppleDS.layout.screenPadding,
-    paddingTop: 8,
-    paddingBottom: 4,
+  safe: {
+    flex: 1,
   },
-  content: {
+  centerColumn: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'stretch',
     paddingHorizontal: AppleDS.layout.screenPadding,
-    paddingTop: 12,
-    paddingBottom: 40,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 32,
   },
   subtitle: {
     ...typography.body,
-    marginTop: 4,
+    marginTop: 10,
+    textAlign: 'center',
+    paddingHorizontal: 12,
   },
-  privacyNote: {
-    marginTop: 32,
+  actions: {
+    width: '100%',
+  },
+  footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: AppleDS.layout.screenPadding,
+    paddingBottom: 12,
+    paddingTop: 8,
   },
-  privacyText: {
+  footerText: {
     ...typography.footnote,
     color: AppleDS.labelTertiary,
   },

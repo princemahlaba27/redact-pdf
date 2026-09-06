@@ -4,10 +4,10 @@ import type { NormalizedRect } from './redaction';
 export type ThreatCategory = 'financial' | 'contact' | 'identity' | 'custom';
 
 export const THREAT_CATEGORY_LABEL: Record<ThreatCategory, string> = {
-  financial: 'Banking & Balances',
-  contact: 'Contact & Phone',
-  identity: 'Government & Personal',
-  custom: 'Labeled Fields',
+  financial: 'Money & Accounts',
+  contact: 'Phone & Email',
+  identity: 'ID Numbers',
+  custom: 'Other Details',
 };
 
 export const THREAT_CATEGORY_ICON: Record<ThreatCategory, string> = {
@@ -17,28 +17,28 @@ export const THREAT_CATEGORY_ICON: Record<ThreatCategory, string> = {
   custom: 'document-text-outline',
 };
 
-/** Plain badge shown on checklist rows (Apple HIG — no jargon). */
+/**
+ * Plain English checklist labels (no developer jargon).
+ * Spec: Bank Account · Total / Balance · Phone Number · ID Number
+ */
 export type ThreatBadge =
-  | 'Balance'
-  | 'Account Number'
-  | 'Card'
-  | 'Phone'
+  | 'Bank Account'
+  | 'Total / Balance'
+  | 'Card Number'
+  | 'Phone Number'
   | 'Email'
-  | 'SSN'
   | 'ID Number'
   | 'Name'
   | 'Address'
   | 'Date'
   | 'Private Field';
 
-/** Plain badge aliases used in the checklist UI. */
 export const THREAT_BADGE_LABEL: Record<ThreatBadge, string> = {
-  Balance: 'Balance',
-  'Account Number': 'Account Number',
-  Card: 'Card',
-  Phone: 'Phone',
+  'Bank Account': 'Bank Account',
+  'Total / Balance': 'Total / Balance',
+  'Card Number': 'Card Number',
+  'Phone Number': 'Phone Number',
   Email: 'Email',
-  SSN: 'SSN',
   'ID Number': 'ID Number',
   Name: 'Name',
   Address: 'Address',
@@ -50,8 +50,10 @@ export type ThreatItem = {
   id: string;
   category: ThreatCategory;
   badge: ThreatBadge;
-  /** Exact extracted snippet shown in the checklist. */
+  /** Exact extracted snippet (raw). */
   text: string;
+  /** Masked display string for the checklist row. */
+  displayText: string;
   pageIndex: number;
   /** Normalized 0–1 rect in UI space (origin top-left). */
   rect: NormalizedRect;
@@ -65,3 +67,31 @@ export type TextToken = {
   pageIndex: number;
   rect: NormalizedRect;
 };
+
+/** Mask sensitive snippets for checklist display. */
+export function maskThreatText(badge: ThreatBadge, text: string): string {
+  const trimmed = text.trim();
+  const digits = trimmed.replace(/\D/g, '');
+
+  switch (badge) {
+    case 'Bank Account':
+    case 'Card Number':
+      if (digits.length >= 4) return `Account: ••••${digits.slice(-4)}`;
+      return `Account: ${trimmed}`;
+    case 'Total / Balance':
+      return `Balance: ${trimmed}`;
+    case 'Phone Number':
+      if (digits.length >= 4) return `Phone: ••••${digits.slice(-4)}`;
+      return `Phone: ${trimmed}`;
+    case 'Email': {
+      const at = trimmed.indexOf('@');
+      if (at > 1) return `Email: ${trimmed[0]}•••${trimmed.slice(at)}`;
+      return `Email: ${trimmed}`;
+    }
+    case 'ID Number':
+      if (digits.length >= 4) return `ID: •••-••-${digits.slice(-4)}`;
+      return `ID: ${trimmed}`;
+    default:
+      return trimmed.length > 28 ? `${trimmed.slice(0, 28)}…` : trimmed;
+  }
+}
