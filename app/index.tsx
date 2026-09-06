@@ -21,9 +21,9 @@ export default function DashboardScreen() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  const openEditor = (nextUri: string, nextTitle: string) => {
+  const openThermalScan = (nextUri: string, nextTitle: string) => {
     router.push({
-      pathname: '/editor',
+      pathname: '/thermal-scan',
       params: { uri: nextUri, title: nextTitle },
     });
   };
@@ -42,7 +42,7 @@ export default function DashboardScreen() {
       // Always re-copy into a stable cache path for WebView / pdf-lib access.
       const cachedUri = await cachePdfUri(asset.uri);
       await Haptic.success();
-      openEditor(cachedUri, asset.name?.replace(/\.pdf$/i, '') || 'Evidence');
+      openThermalScan(cachedUri, asset.name?.replace(/\.pdf$/i, '') || 'Evidence');
     } catch {
       await Haptic.error();
     } finally {
@@ -69,7 +69,7 @@ export default function DashboardScreen() {
       const uris = result.assets.map((a) => a.uri);
       const pdfUri = await imagesToPdf(uris);
       await Haptic.success();
-      openEditor(pdfUri, 'Secure Capture');
+      openThermalScan(pdfUri, 'Secure Capture');
     } catch {
       await Haptic.error();
     } finally {

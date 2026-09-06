@@ -43,6 +43,7 @@ import {
   uuidv4,
 } from '../src/services/redactionEngine';
 import { useSubscription } from '../src/services/subscription';
+import { useThermalSession } from '../src/services/thermalSession';
 import { AppleDS, typography } from '../src/theme/tokens';
 
 function sanitizationReport(count: number): string {
@@ -61,6 +62,7 @@ export default function EditorScreen() {
 
   const { bannerVisible, dismissBanner } = useScreenProtection(true);
   const isSubscribed = useSubscription((s) => s.isSubscribed);
+  const consumePending = useThermalSession((s) => s.consumePending);
   const pendingExport = useRef(false);
 
   const [renderUri, setRenderUri] = useState<string | null>(null);
@@ -69,6 +71,7 @@ export default function EditorScreen() {
   const [mode, setMode] = useState<RedactionMode>('manual');
   const [style, setStyle] = useState<RedactionStyle>('black');
   const [redactions, setRedactions] = useState<RedactionRect[]>([]);
+  const seededRef = useRef(false);
   const [detecting, setDetecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [loadingDoc, setLoadingDoc] = useState(true);
@@ -76,6 +79,15 @@ export default function EditorScreen() {
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
   const lastBurnPulse = useRef(0);
+
+  useEffect(() => {
+    if (seededRef.current) return;
+    const seeded = consumePending();
+    if (seeded.length) {
+      seededRef.current = true;
+      setRedactions(seeded);
+    }
+  }, [consumePending]);
 
   useEffect(() => {
     if (!uri) {

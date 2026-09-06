@@ -31,6 +31,10 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen
+          name="thermal-scan"
+          options={{ animation: 'fade', gestureEnabled: false }}
+        />
+        <Stack.Screen
           name="editor"
           options={{ animation: 'slide_from_right', gestureEnabled: false }}
         />
