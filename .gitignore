@@ -36,11 +36,17 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders (Expo prebuild) — keep local Expo module sources
+# generated native folders (Expo prebuild at repo root)
 /ios/
 /android/
-!modules/**/ios/
-!modules/**/android/
+
+# Keep local Expo module native sources trackable
+!/modules/
+!/modules/**/
+!/modules/**/ios/
+!/modules/**/android/
+!/modules/**/ios/**
+!/modules/**/android/**
 
 # Archived Flutter build artifacts
 archive/flutter/.dart_tool/
