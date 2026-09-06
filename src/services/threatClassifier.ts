@@ -17,7 +17,7 @@ export const FINANCIAL_RE =
   /(?:[$€£R]\s?[\d,]+(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})\b)/g;
 
 /** Account / card digit runs (8–18 digits, optional single spaces or dashes). */
-export const ACCOUNT_RE = /\b\d(?:[ -]?\d){7,17}\b/g;
+export const ACCOUNT_RE = /\b(?:\d[ -]*?){8,18}\b/g;
 
 /** Phone numbers (local + optional country code). */
 export const PHONE_RE =

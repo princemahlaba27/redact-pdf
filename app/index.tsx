@@ -12,7 +12,8 @@ import {
   ScreenBackground,
 } from '../src/components/ui';
 import { Haptic } from '../src/services/haptics';
-import { cachePdfUri, imagesToPdf } from '../src/services/redactionEngine';
+import { processImagesForRedaction } from '../src/services/imagePipeline';
+import { cachePdfUri } from '../src/services/redactionEngine';
 import { AppleDS, typography } from '../src/theme/tokens';
 
 /**
@@ -73,7 +74,8 @@ export default function DashboardScreen() {
     setBusy(true);
     try {
       const uris = result.assets.map((a) => a.uri);
-      const pdfUri = await imagesToPdf(uris);
+      // Image pipeline: upright JPEG → Apple Vision OCR → PDF canvas
+      const { pdfUri } = await processImagesForRedaction(uris);
       await Haptic.success();
       openEditor(pdfUri, 'Scan');
     } catch {
@@ -123,7 +125,9 @@ export default function DashboardScreen() {
           </Text>
         </View>
       </SafeAreaView>
-      {busy ? <LoadingOverlay message="Opening document…" /> : null}
+      {busy ? (
+        <LoadingOverlay message="Reading private details on-device…" />
+      ) : null}
     </ScreenBackground>
   );
 }

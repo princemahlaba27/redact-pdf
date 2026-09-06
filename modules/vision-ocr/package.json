@@ -1,0 +1,16 @@
+{
+  "name": "vision-ocr",
+  "version": "1.0.0",
+  "description": "On-device Apple Vision / ML Kit text recognition for RedactPDF",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {},
+  "keywords": ["expo", "ocr", "vision"],
+  "author": "RedactPDF",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

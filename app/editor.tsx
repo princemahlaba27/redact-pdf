@@ -47,6 +47,7 @@ import {
   uuidv4,
 } from '../src/services/redactionEngine';
 import { useSubscription } from '../src/services/subscription';
+import { useOcrSession } from '../src/services/ocrSession';
 import {
   classifyTextTokens,
   threatsToRedactions,
@@ -76,6 +77,7 @@ export default function EditorScreen() {
   const isSubscribed = useSubscription((s) => s.isSubscribed);
   const pendingExport = useRef(false);
   const viewerRef = useRef<PdfPageViewerHandle>(null);
+  const visionSeededRef = useRef(false);
 
   const [renderUri, setRenderUri] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(1);
@@ -94,6 +96,27 @@ export default function EditorScreen() {
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
   const lastBurnPulse = useRef(0);
+
+
+  // Seed Private Details from Apple Vision when this doc came from photos.
+  useEffect(() => {
+    const { tokens, fromImages } = useOcrSession.getState().consumePending();
+    if (!fromImages || tokens.length === 0) return;
+    visionSeededRef.current = true;
+    setDetecting(true);
+    try {
+      const found = classifyTextTokens(tokens);
+      setThreats(found);
+      const maxPage = tokens.reduce((m, t) => Math.max(m, t.pageIndex + 1), 1);
+      if (maxPage > 0) setPageCount((c) => Math.max(c, maxPage));
+      if (found.length) {
+        setAuditOpen(true);
+        void Haptic.success();
+      }
+    } finally {
+      setDetecting(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!uri) {
@@ -158,6 +181,32 @@ export default function EditorScreen() {
 
   const onTokensExtracted = useCallback((tokens: TextToken[], pages: number) => {
     if (pages > 0) setPageCount(pages);
+    // Image-origin docs already have Vision tokens — don't replace with empty PDF text layer.
+    if (visionSeededRef.current && tokens.length === 0) return;
+    if (visionSeededRef.current && tokens.length > 0) {
+      // Merge rare embedded text with Vision hits.
+      setDetecting(true);
+      try {
+        setThreats((prev) => {
+          const extra = classifyTextTokens(tokens);
+          const keys = new Set(
+            prev.map(
+              (t) =>
+                `${t.pageIndex}|${t.badge}|${t.text.toLowerCase()}|${t.rect.x.toFixed(3)}|${t.rect.y.toFixed(3)}`,
+            ),
+          );
+          const merged = [...prev];
+          for (const item of extra) {
+            const key = `${item.pageIndex}|${item.badge}|${item.text.toLowerCase()}|${item.rect.x.toFixed(3)}|${item.rect.y.toFixed(3)}`;
+            if (!keys.has(key)) merged.push(item);
+          }
+          return merged;
+        });
+      } finally {
+        setDetecting(false);
+      }
+      return;
+    }
     setDetecting(true);
     try {
       const found = classifyTextTokens(tokens);
