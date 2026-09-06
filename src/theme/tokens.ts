@@ -6,6 +6,7 @@ import { ColorValue } from 'react-native';
 export const AppleDS = {
   canvas: '#000000',
   surface: '#000000',
+  /** Apple system elevated dark gray for cards / sheets. */
   surfaceElevated: '#1C1C1E',
   surfaceGrouped: '#1C1C1E',
 

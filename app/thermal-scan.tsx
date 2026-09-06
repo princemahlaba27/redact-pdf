@@ -172,7 +172,7 @@ export default function ThermalScanScreen() {
     <ScreenBackground>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right', 'bottom']}>
         <View style={styles.topBar}>
-          <Text style={styles.modeLabel}>THERMAL VULNERABILITY SCAN</Text>
+          <Text style={styles.modeLabel}>PRIVACY SCAN</Text>
           <Pressable onPress={() => void skipToEditor()} hitSlop={12}>
             <Text style={styles.skip}>Skip</Text>
           </Pressable>
@@ -221,7 +221,7 @@ export default function ThermalScanScreen() {
         <View style={styles.footer}>
           {phase === 'scanning' || phase === 'loading' ? (
             <Text style={styles.status}>
-              {phase === 'loading' ? 'Arming thermal optics…' : 'Exposure scan in progress…'}
+              {phase === 'loading' ? 'Opening document…' : 'Looking for private details…'}
             </Text>
           ) : null}
 
@@ -242,7 +242,7 @@ export default function ThermalScanScreen() {
           ) : null}
 
           {phase === 'shredded' ? (
-            <Text style={styles.status}>Opening destruction canvas…</Text>
+            <Text style={styles.status}>Opening editor…</Text>
           ) : null}
         </View>
       </SafeAreaView>

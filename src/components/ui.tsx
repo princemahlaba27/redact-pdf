@@ -197,14 +197,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: AppleDS.layout.cardPadding,
     borderRadius: AppleDS.radius.lg,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
+    backgroundColor: AppleDS.surfaceElevated,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: AppleDS.separatorOpaque,
     gap: 16,
   },
   cardPrimary: {
-    backgroundColor: 'rgba(10,133,255,0.12)',
-    borderColor: 'rgba(10,133,255,0.35)',
+    backgroundColor: AppleDS.surfaceElevated,
+    borderColor: 'rgba(10,132,255,0.45)',
   },
   iconBox: {
     width: AppleDS.layout.iconSize,

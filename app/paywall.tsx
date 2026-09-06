@@ -118,7 +118,7 @@ export default function PaywallScreen() {
           </View>
 
           <Text style={styles.headline}>Permanently Black Out & Export</Text>
-          <Text style={styles.docLine} numberOfLines={3}>
+          <Text style={styles.docLine} numberOfLines={4}>
             The blacked-out areas will be burned into the document so they can
             never be uncovered.
           </Text>

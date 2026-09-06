@@ -549,7 +549,7 @@ export default function EditorScreen() {
             </Pressable>
           </View>
           <Text style={[typography.caption, { marginTop: 6, textAlign: 'center' }]}>
-            Ink: {REDACTION_STYLE_LABEL[style]}
+            Color: {REDACTION_STYLE_LABEL[style]}
           </Text>
         </FloatingToolbar>
       </SafeAreaView>

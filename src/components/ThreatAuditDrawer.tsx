@@ -77,7 +77,7 @@ export function ThreatAuditDrawer({
                 {threats.length === 1 ? '' : 's'}
               </Text>
               <Text style={styles.subtitle}>
-                {enabledCount} selected to hide · tap a row to jump there
+                {enabledCount} checked to hide · tap a row to jump on the page
               </Text>
             </View>
             <Pressable onPress={onClose} hitSlop={12} accessibilityLabel="Close">
