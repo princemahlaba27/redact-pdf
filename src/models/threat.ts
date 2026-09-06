@@ -1,25 +1,34 @@
 import type { NormalizedRect } from './redaction';
 
-/** Categories for the Private Details checklist. */
-export type ThreatCategory = 'financial' | 'contact' | 'identity' | 'custom';
+/**
+ * Private Details checklist groups (plain English + emoji headers).
+ * Spec: Invoice Details · Banking & Balances · Contact Info
+ */
+export type ThreatCategory =
+  | 'invoice'
+  | 'banking'
+  | 'contact'
+  | 'identity'
+  | 'custom';
 
 export const THREAT_CATEGORY_LABEL: Record<ThreatCategory, string> = {
-  financial: 'Money & Accounts',
-  contact: 'Phone & Email',
+  invoice: '🧾 Invoice Details',
+  banking: '🏦 Banking & Balances',
+  contact: '📞 Contact Info',
   identity: 'ID Numbers',
   custom: 'Other Details',
 };
 
 export const THREAT_CATEGORY_ICON: Record<ThreatCategory, string> = {
-  financial: 'card-outline',
+  invoice: 'receipt-outline',
+  banking: 'card-outline',
   contact: 'call-outline',
   identity: 'id-card-outline',
   custom: 'document-text-outline',
 };
 
 /**
- * Plain English checklist labels (no developer jargon).
- * Spec: Bank Account · Total / Balance · Phone Number · ID Number
+ * Plain English checklist badges.
  */
 export type ThreatBadge =
   | 'Bank Account'
@@ -31,7 +40,8 @@ export type ThreatBadge =
   | 'Name'
   | 'Address'
   | 'Date'
-  | 'Private Field';
+  | 'Private Field'
+  | 'IBAN';
 
 export const THREAT_BADGE_LABEL: Record<ThreatBadge, string> = {
   'Bank Account': 'Bank Account',
@@ -44,6 +54,7 @@ export const THREAT_BADGE_LABEL: Record<ThreatBadge, string> = {
   Address: 'Address',
   Date: 'Date',
   'Private Field': 'Private Field',
+  IBAN: 'IBAN',
 };
 
 export type ThreatItem = {
@@ -68,6 +79,13 @@ export type TextToken = {
   rect: NormalizedRect;
 };
 
+/** Full OCR / PDF text line used by the text-snap highlighter brush. */
+export type OcrSnapLine = {
+  text: string;
+  pageIndex: number;
+  rect: NormalizedRect;
+};
+
 /** Mask sensitive snippets for checklist display. */
 export function maskThreatText(badge: ThreatBadge, text: string): string {
   const trimmed = text.trim();
@@ -76,10 +94,16 @@ export function maskThreatText(badge: ThreatBadge, text: string): string {
   switch (badge) {
     case 'Bank Account':
     case 'Card Number':
+    case 'IBAN':
       if (digits.length >= 4) return `Account: ••••${digits.slice(-4)}`;
       return `Account: ${trimmed}`;
-    case 'Total / Balance':
-      return `Balance: ${trimmed}`;
+    case 'Total / Balance': {
+      // Prefer "Total: …" / "Ending Balance" style from already-formatted text.
+      if (/^(total|subtotal|balance|amount|vat|tax|price|ending)\b/i.test(trimmed)) {
+        return trimmed.length > 42 ? `${trimmed.slice(0, 42)}…` : trimmed;
+      }
+      return `Total: ${trimmed}`;
+    }
     case 'Phone Number':
       if (digits.length >= 4) return `Phone: ••••${digits.slice(-4)}`;
       return `Phone: ${trimmed}`;
@@ -91,6 +115,14 @@ export function maskThreatText(badge: ThreatBadge, text: string): string {
     case 'ID Number':
       if (digits.length >= 4) return `ID: •••-••-${digits.slice(-4)}`;
       return `ID: ${trimmed}`;
+    case 'Name':
+      return trimmed.toLowerCase().startsWith('billed')
+        ? trimmed
+        : `Billed To: ${trimmed}`;
+    case 'Address':
+      return trimmed.toLowerCase().startsWith('address')
+        ? trimmed
+        : `Address: ${trimmed}`;
     default:
       return trimmed.length > 28 ? `${trimmed.slice(0, 28)}…` : trimmed;
   }

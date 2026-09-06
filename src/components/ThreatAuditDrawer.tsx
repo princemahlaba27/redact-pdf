@@ -27,7 +27,13 @@ type Props = {
   onFocusThreat: (threat: ThreatItem) => void;
 };
 
-const ORDER: ThreatCategory[] = ['financial', 'contact', 'identity', 'custom'];
+const ORDER: ThreatCategory[] = [
+  'invoice',
+  'banking',
+  'contact',
+  'identity',
+  'custom',
+];
 
 /**
  * Interactive Private Details checklist — toggle each hit to add/remove
@@ -109,8 +115,8 @@ export function ThreatAuditDrawer({
           >
             {grouped.length === 0 ? (
               <Text style={styles.empty}>
-                No private details found in the text layer. Draw a box over
-                anything else you want to hide.
+                No private details found in the text layer. Drag across a line
+                of text to highlight and hide it.
               </Text>
             ) : (
               grouped.map((group) => (

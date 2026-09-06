@@ -1,5 +1,6 @@
 import type { NormalizedRect, RedactionStyle } from '../models/redaction';
 import type {
+  OcrSnapLine,
   TextToken,
   ThreatBadge,
   ThreatCategory,
@@ -9,15 +10,19 @@ import { maskThreatText } from '../models/threat';
 import { uuidv4 } from './redactionEngine';
 
 /**
- * Strict high-intent private-data matchers — only fire on real extracted text.
- * Zero invented coordinates: every hit inherits the token's real glyph rect.
+ * High-precision invoice / statement / contact matchers.
+ * Every hit inherits a real glyph rect — never invents empty boxes.
  */
-/** Financial balances & totals (currency symbol OR thousands-grouped amount). */
-export const FINANCIAL_RE =
-  /(?:[$€£R]\s?[\d,]+(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})\b)/g;
 
-/** Account / card digit runs (8–18 digits, optional single spaces or dashes). */
-export const ACCOUNT_RE = /\b(?:\d[ -]*?){8,18}\b/g;
+/** Standalone currency / numeric totals (symbol optional). */
+export const FINANCIAL_RE =
+  /(?:[\$€£R¥]\s?)?\b\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})\b/g;
+
+/** Account / card digit runs (8–20 digits, optional spaces or dashes). */
+export const ACCOUNT_RE = /\b(?:\d[ -]*?){8,20}\b/g;
+
+/** IBAN-style identifiers. */
+export const IBAN_RE = /\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b/gi;
 
 /** Phone numbers (local + optional country code). */
 export const PHONE_RE =
@@ -29,6 +34,18 @@ export const EMAIL_RE =
 
 /** SSN-style identifiers. */
 export const IDENTITY_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+
+/** Street / mailing addresses. */
+export const ADDRESS_RE =
+  /\b\d{1,5}\s+[A-Za-z0-9\s.,#-]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Box)\b/gi;
+
+/** Invoice / receipt anchor labels. */
+export const INVOICE_ANCHOR_RE =
+  /(?:total|balance due|amount due|subtotal|billed to|invoice to|recipient|vat|tax|payment due|price)\b/gi;
+
+/** Bank statement balance anchors. */
+export const BALANCE_ANCHOR_RE =
+  /(?:(?:opening|closing)\s+balance|available\s+funds|\bbalance\b)/gi;
 
 /** Reject lone calendar years mistaken for short account numbers. */
 export function isFourDigitYear(digits: string): boolean {
@@ -72,6 +89,14 @@ function pad(r: NormalizedRect, dx = 0.004, dy = 0.003): NormalizedRect {
   });
 }
 
+function unionRects(a: NormalizedRect, b: NormalizedRect): NormalizedRect {
+  const x0 = Math.min(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const x1 = Math.max(a.x + a.width, b.x + b.width);
+  const y1 = Math.max(a.y + a.height, b.y + b.height);
+  return clampRect({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
+}
+
 /**
  * Slice a line rect to the horizontal span of a substring match.
  * Never invents Y — always inherits the real token's y/height.
@@ -91,6 +116,52 @@ function sliceRectForMatch(
     width: lineRect.width * Math.max(end - start, 0.03),
     height: lineRect.height,
   });
+}
+
+/**
+ * Line-level bounding box unioning.
+ * Same horizontal text line when mid-Y variance ≤ 4px and X-gap < 12px
+ * (normalized against a typical ~612×792 page when page size unknown).
+ */
+export function unionAdjacentWordRects(
+  rects: NormalizedRect[],
+  pageWidthPx = 612,
+  pageHeightPx = 792,
+): NormalizedRect[] {
+  if (rects.length === 0) return [];
+  const yTol = 4 / Math.max(pageHeightPx, 1);
+  const xGap = 12 / Math.max(pageWidthPx, 1);
+
+  const sorted = [...rects].sort((a, b) => a.y - b.y || a.x - b.x);
+  const merged: NormalizedRect[] = [];
+
+  for (const rect of sorted) {
+    if (rect.width < 0.002 || rect.height < 0.002) continue;
+    const midY = rect.y + rect.height / 2;
+    let absorbed = false;
+    for (let i = 0; i < merged.length; i++) {
+      const m = merged[i];
+      const mMid = m.y + m.height / 2;
+      if (Math.abs(mMid - midY) > yTol) continue;
+      const left = Math.min(m.x, rect.x);
+      const right = Math.max(m.x + m.width, rect.x + rect.width);
+      const gap =
+        Math.max(m.x, rect.x) - Math.min(m.x + m.width, rect.x + rect.width);
+      // Overlap (gap ≤ 0) or under 12px X-gap → union into one clean bar.
+      if (gap <= xGap) {
+        merged[i] = {
+          x: left,
+          y: Math.min(m.y, rect.y),
+          width: right - left,
+          height: Math.max(m.y + m.height, rect.y + rect.height) - Math.min(m.y, rect.y),
+        };
+        absorbed = true;
+        break;
+      }
+    }
+    if (!absorbed) merged.push({ ...rect });
+  }
+  return merged.map(clampRect);
 }
 
 function accountBadge(value: string): ThreatBadge {
@@ -121,6 +192,7 @@ function makeItem(
   value: string,
   pageIndex: number,
   rect: NormalizedRect,
+  displayOverride?: string,
 ): ThreatItem {
   const text = value.trim();
   return {
@@ -128,7 +200,7 @@ function makeItem(
     category,
     badge,
     text,
-    displayText: maskThreatText(badge, text),
+    displayText: displayOverride ?? maskThreatText(badge, text),
     pageIndex,
     rect: pad(rect),
     enabled: true,
@@ -142,12 +214,12 @@ function matchCategory(
   out: ThreatItem[],
   badgeFor: (m: string) => ThreatBadge,
   filter?: (m: string) => boolean,
+  displayFor?: (m: string) => string,
 ) {
   const text = token.text;
-  // Skip tokens with no real glyphs — never invent empty blackout boxes.
   if (!text.replace(/\s/g, '').length) return;
 
-  for (const m of text.matchAll(new RegExp(re.source, 'g'))) {
+  for (const m of text.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))) {
     const value = m[0];
     if (filter && !filter(value)) continue;
     const idx = m.index ?? text.indexOf(value);
@@ -160,8 +232,266 @@ function matchCategory(
         value,
         token.pageIndex,
         sliceRectForMatch(token.rect, text, idx, value.length),
+        displayFor?.(value),
       ),
     );
+  }
+}
+
+type LineGroup = {
+  midY: number;
+  pageIndex: number;
+  parts: TextToken[];
+  text: string;
+  rect: NormalizedRect;
+};
+
+function buildLineGroups(tokens: TextToken[]): LineGroup[] {
+  const byPage = new Map<number, TextToken[]>();
+  for (const t of tokens) {
+    const list = byPage.get(t.pageIndex) ?? [];
+    list.push(t);
+    byPage.set(t.pageIndex, list);
+  }
+
+  const lines: LineGroup[] = [];
+  for (const [pageIndex, pageTokens] of byPage) {
+    const sorted = [...pageTokens].sort(
+      (a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+    );
+    const groups: { midY: number; parts: TextToken[] }[] = [];
+    for (const token of sorted) {
+      if (token.rect.width < 0.004 || token.rect.height < 0.004) continue;
+      const midY = token.rect.y + token.rect.height / 2;
+      let line = groups.find(
+        (L) => Math.abs(L.midY - midY) < Math.max(token.rect.height * 0.7, 0.012),
+      );
+      if (!line) {
+        line = { midY, parts: [] };
+        groups.push(line);
+      }
+      line.parts.push(token);
+    }
+
+    for (const g of groups) {
+      g.parts.sort((a, b) => a.rect.x - b.rect.x);
+      const text = g.parts
+        .map((p) => p.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.length < 1) continue;
+      const x0 = Math.min(...g.parts.map((p) => p.rect.x));
+      const y0 = Math.min(...g.parts.map((p) => p.rect.y));
+      const x1 = Math.max(...g.parts.map((p) => p.rect.x + p.rect.width));
+      const y1 = Math.max(...g.parts.map((p) => p.rect.y + p.rect.height));
+      lines.push({
+        midY: g.midY,
+        pageIndex,
+        parts: g.parts,
+        text,
+        rect: {
+          x: x0,
+          y: y0,
+          width: Math.max(x1 - x0, 0.01),
+          height: Math.max(y1 - y0, 0.01),
+        },
+      });
+    }
+  }
+
+  return lines.sort(
+    (a, b) => a.pageIndex - b.pageIndex || a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+  );
+}
+
+/** Build snap-line geometry from raw tokens (Vision / pdf.js). */
+export function tokensToSnapLines(tokens: TextToken[]): OcrSnapLine[] {
+  return buildLineGroups(tokens).map((l) => ({
+    text: l.text,
+    pageIndex: l.pageIndex,
+    rect: l.rect,
+  }));
+}
+
+function isNameAnchor(label: string): boolean {
+  return /billed to|invoice to|recipient/i.test(label);
+}
+
+function isAmountAnchor(label: string): boolean {
+  return /total|balance due|amount due|subtotal|vat|tax|payment due|price|balance|available funds/i.test(
+    label,
+  );
+}
+
+function extractValueAfterLabel(
+  line: LineGroup,
+  labelIndex: number,
+  labelLength: number,
+): { text: string; rect: NormalizedRect } | null {
+  const after = line.text.slice(labelIndex + labelLength).replace(/^[\s:.\-–—]+/, '');
+  if (!after.trim()) return null;
+  const start = line.text.indexOf(after, labelIndex + labelLength);
+  if (start < 0) return null;
+  return {
+    text: after.trim(),
+    rect: sliceRectForMatch(line.rect, line.text, start, after.trim().length),
+  };
+}
+
+function firstAmountInText(
+  text: string,
+  rect: NormalizedRect,
+): { text: string; rect: NormalizedRect } | null {
+  const m = text.match(new RegExp(FINANCIAL_RE.source, 'g'));
+  if (!m || !m[0]) return null;
+  const idx = text.indexOf(m[0]);
+  if (idx < 0) return null;
+  return {
+    text: m[0],
+    rect: sliceRectForMatch(rect, text, idx, m[0].length),
+  };
+}
+
+/**
+ * Anchor-based extraction: label bbox ∪ value to the right OR next line below.
+ */
+function extractAnchors(lines: LineGroup[], out: ThreatItem[]) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const text = line.text;
+
+    for (const m of text.matchAll(new RegExp(INVOICE_ANCHOR_RE.source, 'gi'))) {
+      const label = m[0];
+      const idx = m.index ?? 0;
+      const labelRect = sliceRectForMatch(line.rect, text, idx, label.length);
+
+      let value = extractValueAfterLabel(line, idx, label.length);
+      // Prefer amount on same line when this is a money anchor.
+      if (isAmountAnchor(label)) {
+        const sameLineAmt = firstAmountInText(
+          text.slice(idx + label.length),
+          // approximate: slice remaining text region
+          sliceRectForMatch(
+            line.rect,
+            text,
+            idx + label.length,
+            Math.max(text.length - idx - label.length, 1),
+          ),
+        );
+        if (sameLineAmt) value = sameLineAmt;
+      }
+
+      // Fall back to immediately-below next line on same page.
+      if ((!value || !value.text) && i + 1 < lines.length) {
+        const next = lines[i + 1];
+        if (next.pageIndex === line.pageIndex) {
+          if (isAmountAnchor(label)) {
+            value = firstAmountInText(next.text, next.rect) ?? {
+              text: next.text,
+              rect: next.rect,
+            };
+          } else if (isNameAnchor(label)) {
+            value = { text: next.text, rect: next.rect };
+          } else {
+            value = firstAmountInText(next.text, next.rect) ?? {
+              text: next.text,
+              rect: next.rect,
+            };
+          }
+        }
+      }
+
+      if (!value || !value.text.trim()) {
+        // Still redact the label itself when it's a high-intent field.
+        pushUnique(
+          out,
+          makeItem(
+            isNameAnchor(label) ? 'invoice' : 'invoice',
+            isNameAnchor(label) ? 'Name' : 'Total / Balance',
+            label,
+            line.pageIndex,
+            labelRect,
+            isNameAnchor(label) ? `Billed To: ${label}` : label,
+          ),
+        );
+        continue;
+      }
+
+      const combined = unionRects(labelRect, value.rect);
+      if (isNameAnchor(label)) {
+        pushUnique(
+          out,
+          makeItem(
+            'invoice',
+            'Name',
+            value.text,
+            line.pageIndex,
+            combined,
+            `Billed To: ${value.text}`,
+          ),
+        );
+      } else {
+        const amount =
+          firstAmountInText(value.text, value.rect)?.text ?? value.text;
+        const displayLabel = /subtotal/i.test(label)
+          ? 'Subtotal'
+          : /vat|tax/i.test(label)
+            ? label.replace(/\b\w/g, (c) => c.toUpperCase())
+            : /balance due|amount due|payment due/i.test(label)
+              ? 'Amount Due'
+              : /price/i.test(label)
+                ? 'Price'
+                : 'Total';
+        pushUnique(
+          out,
+          makeItem(
+            'invoice',
+            'Total / Balance',
+            amount,
+            line.pageIndex,
+            combined,
+            `${displayLabel}: ${amount}`,
+          ),
+        );
+      }
+    }
+
+    for (const m of text.matchAll(new RegExp(BALANCE_ANCHOR_RE.source, 'gi'))) {
+      const label = m[0];
+      const idx = m.index ?? 0;
+      // Skip if already covered as invoice "balance due".
+      if (/balance due/i.test(text)) continue;
+      const labelRect = sliceRectForMatch(line.rect, text, idx, label.length);
+      let value =
+        firstAmountInText(text.slice(idx + label.length), sliceRectForMatch(
+          line.rect,
+          text,
+          idx + label.length,
+          Math.max(text.length - idx - label.length, 1),
+        )) ?? extractValueAfterLabel(line, idx, label.length);
+
+      if ((!value || !value.text) && i + 1 < lines.length) {
+        const next = lines[i + 1];
+        if (next.pageIndex === line.pageIndex) {
+          value = firstAmountInText(next.text, next.rect);
+        }
+      }
+      if (!value) continue;
+
+      const ending = /closing|ending|available/i.test(label);
+      pushUnique(
+        out,
+        makeItem(
+          'banking',
+          'Total / Balance',
+          value.text,
+          line.pageIndex,
+          unionRects(labelRect, value.rect),
+          ending ? `Ending Balance: ${value.text}` : `Balance: ${value.text}`,
+        ),
+      );
+    }
   }
 }
 
@@ -172,50 +502,63 @@ function matchCategory(
  */
 export function classifyTextTokens(tokens: TextToken[]): ThreatItem[] {
   const out: ThreatItem[] = [];
+  const lines = buildLineGroups(tokens);
 
-  for (const token of tokens) {
-    const text = token.text.replace(/\s+/g, ' ').trim();
-    if (text.length < 2) continue;
-    // Reject degenerate rects (blank / zero-area) — no phantom boxes.
-    if (token.rect.width < 0.004 || token.rect.height < 0.004) continue;
+  // 1) Anchor-based invoice / statement extraction (label + adjacent value).
+  extractAnchors(lines, out);
+
+  // 2) Line-level regex for standalone amounts, accounts, contacts, addresses.
+  for (const line of lines) {
+    const token: TextToken = {
+      text: line.text,
+      pageIndex: line.pageIndex,
+      rect: line.rect,
+    };
+    if (line.text.length < 2) continue;
 
     matchCategory(
-      'financial',
+      'invoice',
       FINANCIAL_RE,
-      { ...token, text },
+      token,
       out,
       () => 'Total / Balance',
+      undefined,
+      (m) => `Total: ${m}`,
     );
 
     matchCategory(
-      'financial',
+      'banking',
       ACCOUNT_RE,
-      { ...token, text },
+      token,
       out,
       accountBadge,
       (m) => {
         const digits = m.replace(/\D/g, '');
-        // Only flag account-length strings; never lone years like 2024–2026.
         if (isFourDigitYear(digits)) return false;
-        if (digits.length < 8 || digits.length > 18) return false;
-        // Card-length runs must pass Luhn; shorter account runs are accepted.
+        if (digits.length < 8 || digits.length > 20) return false;
         if (digits.length >= 13 && digits.length <= 19) return luhnOk(digits);
         return true;
       },
     );
 
     matchCategory(
+      'banking',
+      IBAN_RE,
+      token,
+      out,
+      () => 'IBAN',
+    );
+
+    matchCategory(
       'contact',
       PHONE_RE,
-      { ...token, text },
+      token,
       out,
       () => 'Phone Number',
       (m) => {
         const digits = m.replace(/\D/g, '');
         if (digits.length < 10 || digits.length > 15) return false;
-        // Bare digit runs belong to account matching — phones need formatting.
         if (/^\d+$/.test(m.trim())) return false;
-        // Luhn-valid card-length strings are accounts, not phones.
         if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) {
           return false;
         }
@@ -223,21 +566,73 @@ export function classifyTextTokens(tokens: TextToken[]): ThreatItem[] {
       },
     );
 
-    matchCategory('contact', EMAIL_RE, { ...token, text }, out, () => 'Email');
+    matchCategory('contact', EMAIL_RE, token, out, () => 'Email');
+
+    matchCategory(
+      'invoice',
+      ADDRESS_RE,
+      token,
+      out,
+      () => 'Address',
+      undefined,
+      (m) => `Address: ${m.trim()}`,
+    );
 
     matchCategory(
       'identity',
       IDENTITY_RE,
-      { ...token, text },
+      token,
       out,
       () => 'ID Number',
     );
   }
 
-  return out.sort(
+  // 3) Union near-adjacent same-line boxes so we never draw floating crumbs.
+  return mergeSameLineThreats(out).sort(
     (a, b) =>
       a.pageIndex - b.pageIndex || a.rect.y - b.rect.y || a.rect.x - b.rect.x,
   );
+}
+
+/**
+ * Merge threat boxes that sit on the same line with a tiny X-gap
+ * (4px Y / 12px X) when they share category+badge — cleaner blackout bars.
+ */
+function mergeSameLineThreats(items: ThreatItem[]): ThreatItem[] {
+  if (items.length <= 1) return items;
+  const yTol = 4 / 792;
+  const xGap = 12 / 612;
+  const sorted = [...items].sort(
+    (a, b) =>
+      a.pageIndex - b.pageIndex || a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+  );
+  const out: ThreatItem[] = [];
+
+  for (const item of sorted) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      prev.pageIndex === item.pageIndex &&
+      prev.category === item.category &&
+      prev.badge === item.badge &&
+      Math.abs(
+        prev.rect.y + prev.rect.height / 2 - (item.rect.y + item.rect.height / 2),
+      ) <= yTol
+    ) {
+      const gap =
+        Math.max(prev.rect.x, item.rect.x) -
+        Math.min(prev.rect.x + prev.rect.width, item.rect.x + item.rect.width);
+      if (gap <= xGap) {
+        prev.rect = pad(unionRects(prev.rect, item.rect), 0, 0);
+        if (!prev.text.includes(item.text)) {
+          prev.text = `${prev.text} ${item.text}`.trim();
+        }
+        continue;
+      }
+    }
+    out.push({ ...item, rect: { ...item.rect } });
+  }
+  return out;
 }
 
 export function threatsToRedactions(

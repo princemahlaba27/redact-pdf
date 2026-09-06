@@ -13,7 +13,6 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BurnScanline } from '../src/components/BurnScanline';
 import {
   PdfPageViewer,
   type PdfPageViewerHandle,
@@ -37,7 +36,7 @@ import {
   REDACTION_STYLE_COLOR,
   REDACTION_STYLE_LABEL,
 } from '../src/models/redaction';
-import type { TextToken, ThreatItem } from '../src/models/threat';
+import type { OcrSnapLine, TextToken, ThreatItem } from '../src/models/threat';
 import { Haptic } from '../src/services/haptics';
 import {
   burnedPagesToPdf,
@@ -50,6 +49,7 @@ import { useSubscription } from '../src/services/subscription';
 import { useOcrSession } from '../src/services/ocrSession';
 import {
   classifyTextTokens,
+  tokensToSnapLines,
   threatsToRedactions,
 } from '../src/services/threatClassifier';
 import { AppleDS, typography } from '../src/theme/tokens';
@@ -59,6 +59,9 @@ import {
   mapScreenRectToPage,
   type PageFit,
 } from '../src/utils/pageFit';
+
+/** Vertical snap radius (pt) for the text-snap highlighter brush. */
+const SNAP_RADIUS_PT = 16;
 
 function statusCopy(total: number, selected: number): string {
   if (total <= 0) {
@@ -95,18 +98,29 @@ export default function EditorScreen() {
   const [pageNatural, setPageNatural] = useState({ width: 1, height: 1 });
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
-  const lastBurnPulse = useRef(0);
+  const ocrLinesRef = useRef<OcrSnapLine[]>([]);
+  const snapStrokeRef = useRef<{
+    startX: number;
+    line: OcrSnapLine | null;
+    snapped: boolean;
+  }>({ startX: 0, line: null, snapped: false });
+  const lastSnapHaptic = useRef(0);
 
+  const setSnapLines = useCallback((lines: OcrSnapLine[]) => {
+    ocrLinesRef.current = lines;
+  }, []);
 
   // Seed Private Details from Apple Vision when this doc came from photos.
   useEffect(() => {
-    const { tokens, fromImages } = useOcrSession.getState().consumePending();
+    const { tokens, lines, fromImages } =
+      useOcrSession.getState().consumePending();
     if (!fromImages || tokens.length === 0) return;
     visionSeededRef.current = true;
     setDetecting(true);
     try {
       const found = classifyTextTokens(tokens);
       setThreats(found);
+      setSnapLines(lines.length ? lines : tokensToSnapLines(tokens));
       const maxPage = tokens.reduce((m, t) => Math.max(m, t.pageIndex + 1), 1);
       if (maxPage > 0) setPageCount((c) => Math.max(c, maxPage));
       if (found.length) {
@@ -116,7 +130,7 @@ export default function EditorScreen() {
     } finally {
       setDetecting(false);
     }
-  }, []);
+  }, [setSnapLines]);
 
   useEffect(() => {
     if (!uri) {
@@ -179,105 +193,218 @@ export default function EditorScreen() {
     [pageFit],
   );
 
-  const onTokensExtracted = useCallback((tokens: TextToken[], pages: number) => {
-    if (pages > 0) setPageCount(pages);
-    // Image-origin docs already have Vision tokens — don't replace with empty PDF text layer.
-    if (visionSeededRef.current && tokens.length === 0) return;
-    if (visionSeededRef.current && tokens.length > 0) {
-      // Merge rare embedded text with Vision hits.
+  const onTokensExtracted = useCallback(
+    (tokens: TextToken[], pages: number) => {
+      if (pages > 0) setPageCount(pages);
+      const nextLines = tokensToSnapLines(tokens);
+      // Image-origin docs already have Vision tokens — don't replace with empty PDF text layer.
+      if (visionSeededRef.current && tokens.length === 0) return;
+      if (visionSeededRef.current && tokens.length > 0) {
+        // Merge rare embedded text with Vision hits; append snap lines.
+        setDetecting(true);
+        try {
+          setThreats((prev) => {
+            const extra = classifyTextTokens(tokens);
+            const keys = new Set(
+              prev.map(
+                (t) =>
+                  `${t.pageIndex}|${t.badge}|${t.text.toLowerCase()}|${t.rect.x.toFixed(3)}|${t.rect.y.toFixed(3)}`,
+              ),
+            );
+            const merged = [...prev];
+            for (const item of extra) {
+              const key = `${item.pageIndex}|${item.badge}|${item.text.toLowerCase()}|${item.rect.x.toFixed(3)}|${item.rect.y.toFixed(3)}`;
+              if (!keys.has(key)) merged.push(item);
+            }
+            return merged;
+          });
+          setSnapLines([
+            ...ocrLinesRef.current,
+            ...nextLines.filter(
+              (l) =>
+                !ocrLinesRef.current.some(
+                  (e) =>
+                    e.pageIndex === l.pageIndex &&
+                    Math.abs(e.rect.y - l.rect.y) < 0.01 &&
+                    Math.abs(e.rect.x - l.rect.x) < 0.01,
+                ),
+            ),
+          ]);
+        } finally {
+          setDetecting(false);
+        }
+        return;
+      }
       setDetecting(true);
       try {
-        setThreats((prev) => {
-          const extra = classifyTextTokens(tokens);
-          const keys = new Set(
-            prev.map(
-              (t) =>
-                `${t.pageIndex}|${t.badge}|${t.text.toLowerCase()}|${t.rect.x.toFixed(3)}|${t.rect.y.toFixed(3)}`,
-            ),
-          );
-          const merged = [...prev];
-          for (const item of extra) {
-            const key = `${item.pageIndex}|${item.badge}|${item.text.toLowerCase()}|${item.rect.x.toFixed(3)}|${item.rect.y.toFixed(3)}`;
-            if (!keys.has(key)) merged.push(item);
-          }
-          return merged;
-        });
+        const found = classifyTextTokens(tokens);
+        setThreats(found);
+        setSnapLines(nextLines);
+        if (found.length) {
+          setAuditOpen(true);
+          void Haptic.success();
+        }
       } finally {
         setDetecting(false);
       }
-      return;
-    }
-    setDetecting(true);
-    try {
-      const found = classifyTextTokens(tokens);
-      setThreats(found);
-      if (found.length) {
-        setAuditOpen(true);
-        void Haptic.success();
-      }
-    } finally {
-      setDetecting(false);
-    }
-  }, []);
+    },
+    [setSnapLines],
+  );
 
   const onCanvasLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     setCanvasSize({ width, height });
   };
 
-  const pulseBurnHaptic = useCallback(() => {
-    const now = Date.now();
-    if (now - lastBurnPulse.current < 120) return;
-    lastBurnPulse.current = now;
-    void Haptic.medium();
-  }, []);
-
   const addManualRedaction = useCallback(
     (rect: NormalizedRect) => {
-      if (rect.width < 0.01 || rect.height < 0.01) return;
+      if (rect.width < 0.008 || rect.height < 0.006) return;
       setManualRedactions((prev) => [
         ...prev,
-        { id: uuidv4(), pageIndex, rect, style, source: 'manual' },
+        {
+          id: uuidv4(),
+          pageIndex,
+          rect,
+          // Text-snap highlighter always burns solid black.
+          style: 'black',
+          source: 'manual',
+        },
       ]);
       void Haptic.medium();
     },
-    [pageIndex, style],
+    [pageIndex],
   );
 
-  const beginDraft = (rect: NormalizedRect) => {
+  const updateDraft = useCallback((rect: NormalizedRect | null) => {
     draftRef.current = rect;
     setDraft(rect);
-  };
+  }, []);
 
-  const updateDraft = (rect: NormalizedRect | null) => {
-    draftRef.current = rect;
-    setDraft(rect);
-    if (rect && (rect.width > 0.012 || rect.height > 0.012)) {
-      pulseBurnHaptic();
-    }
-  };
-
-  const commitDraft = () => {
+  const commitDraft = useCallback(() => {
     const current = draftRef.current;
     draftRef.current = null;
     setDraft(null);
+    snapStrokeRef.current = { startX: 0, line: null, snapped: false };
     if (current) addManualRedaction(current);
-  };
+  }, [addManualRedaction]);
 
-  const syncDraftFromScreen = useCallback(
-    (x0: number, y0: number, x1: number, y1: number) => {
+  /**
+   * Find nearest OCR line within 16pt vertical radius of the touch.
+   * Snaps stroke top/height to that line; width follows finger X.
+   */
+  const findSnapLine = useCallback(
+    (touchX: number, touchY: number): OcrSnapLine | null => {
+      let best: OcrSnapLine | null = null;
+      let bestDist = SNAP_RADIUS_PT + 1;
+      for (const line of ocrLinesRef.current) {
+        if (line.pageIndex !== pageIndex) continue;
+        const screen = mapPageRectToScreen(line.rect, pageFit, {
+          padX: 0,
+          padY: 0,
+        });
+        const midY = screen.top + screen.height / 2;
+        const dist = Math.abs(midY - touchY);
+        if (dist > SNAP_RADIUS_PT) continue;
+        // Prefer lines whose horizontal span is near the finger.
+        const inXPad =
+          touchX >= screen.left - 24 &&
+          touchX <= screen.left + screen.width + 24;
+        const score = dist + (inXPad ? 0 : 4);
+        if (score < bestDist) {
+          bestDist = score;
+          best = line;
+        }
+      }
+      return best;
+    },
+    [pageFit, pageIndex],
+  );
+
+  const syncSnapStroke = useCallback(
+    (touchX: number, touchY: number, isBegin: boolean) => {
+      if (isBegin) {
+        snapStrokeRef.current = {
+          startX: touchX,
+          line: null,
+          snapped: false,
+        };
+      }
+
+      const pageLines = ocrLinesRef.current.filter(
+        (l) => l.pageIndex === pageIndex,
+      );
+      const line = findSnapLine(touchX, touchY);
+
+      // Freeform fallback only when this page has no OCR/PDF text lines.
+      if (!line && pageLines.length === 0) {
+        const startX = snapStrokeRef.current.startX;
+        const startY = isBegin
+          ? touchY
+          : (snapStrokeRef.current as { startY?: number }).startY ?? touchY;
+        if (isBegin) {
+          (snapStrokeRef.current as { startY?: number }).startY = touchY;
+        }
+        const pageRect = mapScreenRectToPage(
+          {
+            x: Math.min(startX, touchX),
+            y: Math.min(startY, touchY),
+            width: Math.max(Math.abs(touchX - startX), 8),
+            height: Math.max(Math.abs(touchY - startY), 8),
+          },
+          pageFit,
+        );
+        updateDraft(pageRect);
+        return;
+      }
+
+      if (!line) {
+        // No nearby text — clear draft so we never paint empty white space.
+        if (!snapStrokeRef.current.line) {
+          updateDraft(null);
+        }
+        return;
+      }
+
+      const previous = snapStrokeRef.current.line;
+      const lineChanged =
+        !previous ||
+        previous.pageIndex !== line.pageIndex ||
+        Math.abs(previous.rect.y - line.rect.y) > 0.002;
+      snapStrokeRef.current.line = line;
+
+      // Light haptic when the stroke first snaps onto a text line.
+      if (!snapStrokeRef.current.snapped || lineChanged) {
+        const now = Date.now();
+        if (now - lastSnapHaptic.current > 90) {
+          lastSnapHaptic.current = now;
+          void Haptic.light();
+        }
+        snapStrokeRef.current.snapped = true;
+      }
+
+      const startX = snapStrokeRef.current.startX;
+      const left = Math.min(startX, touchX);
+      const width = Math.max(Math.abs(touchX - startX), 8);
+      const lineScreen = mapPageRectToScreen(line.rect, pageFit, {
+        padX: 0,
+        padY: 0,
+      });
+      // Snap Y/height to the OCR line; extend width with horizontal progress.
       const pageRect = mapScreenRectToPage(
         {
-          x: Math.min(x0, x1),
-          y: Math.min(y0, y1),
-          width: Math.abs(x1 - x0),
-          height: Math.abs(y1 - y0),
+          x: left,
+          y: lineScreen.top,
+          width,
+          height: lineScreen.height,
         },
         pageFit,
       );
+      // Lock to exact line baseline/height in page space.
+      pageRect.y = line.rect.y;
+      pageRect.height = Math.max(line.rect.height, 0.01);
       updateDraft(pageRect);
     },
-    [pageFit],
+    [findSnapLine, pageFit, pageIndex, updateDraft],
   );
 
   const pan = useMemo(
@@ -286,19 +413,17 @@ export default function EditorScreen() {
         .enabled(mode === 'manual')
         .onBegin((e) => {
           'worklet';
-          runOnJS(syncDraftFromScreen)(e.x, e.y, e.x, e.y);
+          runOnJS(syncSnapStroke)(e.x, e.y, true);
         })
         .onUpdate((e) => {
           'worklet';
-          const x0 = e.x - e.translationX;
-          const y0 = e.y - e.translationY;
-          runOnJS(syncDraftFromScreen)(x0, y0, e.x, e.y);
+          runOnJS(syncSnapStroke)(e.x, e.y, false);
         })
         .onEnd(() => {
           'worklet';
           runOnJS(commitDraft)();
         }),
-    [mode, syncDraftFromScreen],
+    [mode, syncSnapStroke, commitDraft],
   );
 
   const onModeChange = async (next: RedactionMode) => {
@@ -493,19 +618,12 @@ export default function EditorScreen() {
                       top: draftPx.top,
                       width: draftPx.width,
                       height: draftPx.height,
-                      backgroundColor: REDACTION_STYLE_COLOR[style],
-                      opacity: 0.9,
-                      borderWidth: 1,
-                      borderColor: 'rgba(255,72,42,0.55)',
+                      // Crisp solid black marker fill while dragging.
+                      backgroundColor: '#000000',
+                      opacity: 1,
                     },
                   ]}
-                >
-                  <BurnScanline
-                    active
-                    width={draftPx.width}
-                    height={draftPx.height}
-                  />
-                </View>
+                />
               ) : null}
             </View>
           </GestureDetector>

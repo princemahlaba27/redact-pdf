@@ -323,6 +323,9 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginHorizontal: 16,
     alignSelf: 'stretch',
+    // Comfortable tap target for the 14-day trial CTA.
+    minHeight: 52,
+    paddingVertical: 4,
   },
   links: {
     marginTop: 20,

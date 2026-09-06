@@ -4,6 +4,7 @@ import {
   recognizeTextNative,
   type VisionRawBox,
 } from '../../modules/vision-ocr';
+import { unionAdjacentWordRects } from './threatClassifier';
 
 export type VisionLine = {
   text: string;
@@ -40,7 +41,8 @@ export function visionBoxToUiRect(box: VisionRawBox): {
 
 /**
  * Run Apple Vision (iOS) / native OCR on a preprocessed upright JPEG.
- * Returns UI-space line tokens ready for the regex classifier.
+ * Returns UI-space word tokens (already Y-flipped) ready for anchor classifiers.
+ * Nearby words on the same line are also merged into clean line tokens.
  */
 export async function recognizeImageText(
   imageUri: string,
@@ -54,18 +56,36 @@ export async function recognizeImageText(
   }
 
   const raw = await recognizeTextNative(imageUri);
-  const tokens: TextToken[] = [];
+  const words: TextToken[] = [];
 
   for (const box of raw) {
     const text = String(box.text || '').replace(/\s+/g, ' ').trim();
-    if (text.length < 2) continue;
+    if (text.length < 1) continue;
     const rect = visionBoxToUiRect(box);
-    if (rect.width < 0.004 || rect.height < 0.004) continue;
-    tokens.push({ text, pageIndex, rect });
+    if (rect.width < 0.002 || rect.height < 0.002) continue;
+    words.push({ text, pageIndex, rect });
   }
 
-  // Cluster nearby observations into reading-order lines for better regex spans.
-  return clusterIntoLines(tokens, pageIndex);
+  // Keep word tokens for anchor adjacency, plus merged line tokens for regex spans.
+  const lines = clusterIntoLines(words, pageIndex);
+  // Prefer returning both: classifiers group by mid-Y anyway; word+line improves coverage.
+  return mergeWordAndLineTokens(words, lines);
+}
+
+function mergeWordAndLineTokens(
+  words: TextToken[],
+  lines: TextToken[],
+): TextToken[] {
+  // Dedupe identical text+rect keys; keep all unique geometry.
+  const out: TextToken[] = [];
+  const keys = new Set<string>();
+  for (const t of [...words, ...lines]) {
+    const key = `${t.pageIndex}|${t.text.toLowerCase()}|${t.rect.x.toFixed(3)}|${t.rect.y.toFixed(3)}|${t.rect.width.toFixed(3)}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push(t);
+  }
+  return out;
 }
 
 function clusterIntoLines(tokens: TextToken[], pageIndex: number): TextToken[] {
@@ -91,24 +111,47 @@ function clusterIntoLines(tokens: TextToken[], pageIndex: number): TextToken[] {
   const out: TextToken[] = [];
   for (const line of lines) {
     line.parts.sort((a, b) => a.rect.x - b.rect.x);
+    // Union adjacent words (≤4px Y / <12px X) into a clean horizontal bar —
+    // never leave floating crumbs over empty whitespace.
+    const united = unionAdjacentWordRects(line.parts.map((p) => p.rect));
     const text = line.parts
       .map((p) => p.text)
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
     if (!text) continue;
-    const x0 = Math.min(...line.parts.map((p) => p.rect.x));
-    const y0 = Math.min(...line.parts.map((p) => p.rect.y));
-    const x1 = Math.max(...line.parts.map((p) => p.rect.x + p.rect.width));
-    const y1 = Math.max(...line.parts.map((p) => p.rect.y + p.rect.height));
+    const rect =
+      united.length === 1
+        ? united[0]
+        : united.length > 1
+          ? {
+              x: Math.min(...united.map((r) => r.x)),
+              y: Math.min(...united.map((r) => r.y)),
+              width:
+                Math.max(...united.map((r) => r.x + r.width)) -
+                Math.min(...united.map((r) => r.x)),
+              height:
+                Math.max(...united.map((r) => r.y + r.height)) -
+                Math.min(...united.map((r) => r.y)),
+            }
+          : {
+              x: Math.min(...line.parts.map((p) => p.rect.x)),
+              y: Math.min(...line.parts.map((p) => p.rect.y)),
+              width:
+                Math.max(...line.parts.map((p) => p.rect.x + p.rect.width)) -
+                Math.min(...line.parts.map((p) => p.rect.x)),
+              height:
+                Math.max(...line.parts.map((p) => p.rect.y + p.rect.height)) -
+                Math.min(...line.parts.map((p) => p.rect.y)),
+            };
     out.push({
       text,
       pageIndex,
       rect: {
-        x: x0,
-        y: y0,
-        width: Math.max(x1 - x0, 0.01),
-        height: Math.max(y1 - y0, 0.01),
+        x: rect.x,
+        y: rect.y,
+        width: Math.max(rect.width, 0.01),
+        height: Math.max(rect.height, 0.01),
       },
     });
   }
