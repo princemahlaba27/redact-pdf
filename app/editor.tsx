@@ -237,7 +237,10 @@ export default function EditorScreen() {
     await Haptic.medium();
     if (!isSubscribed) {
       pendingExport.current = true;
-      router.push('/paywall');
+      router.push({
+        pathname: '/paywall',
+        params: { title: title || 'Document' },
+      });
       return;
     }
     await doExport();
