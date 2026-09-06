@@ -3,14 +3,14 @@ export type RedactionMode = 'smart' | 'manual';
 export type RedactionStyle = 'black' | 'blur' | 'white';
 
 export const REDACTION_MODE_LABEL: Record<RedactionMode, string> = {
-  smart: 'Threat Scan',
-  manual: 'Burn Brush',
+  smart: 'Private Details',
+  manual: 'Draw Box',
 };
 
 export const REDACTION_STYLE_LABEL: Record<RedactionStyle, string> = {
-  black: 'Pixel Burn',
-  blur: 'Obfuscate',
-  white: 'Whiteout',
+  black: 'Black',
+  blur: 'Gray',
+  white: 'White',
 };
 
 export const REDACTION_STYLE_COLOR: Record<RedactionStyle, string> = {
@@ -33,6 +33,8 @@ export type RedactionRect = {
   /** Normalized 0–1, top-left origin (UI space). */
   rect: NormalizedRect;
   style: RedactionStyle;
+  /** Present when this box was spawned from the Private Details checklist. */
+  source?: 'threat' | 'manual' | 'thermal';
 };
 
 export type LoadedPdfDocument = {

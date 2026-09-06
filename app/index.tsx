@@ -8,10 +8,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 import {
   ActionCard,
-  Badge,
   LoadingOverlay,
   ScreenBackground,
-  TrustBanner,
 } from '../src/components/ui';
 import { Haptic } from '../src/services/haptics';
 import { cachePdfUri, imagesToPdf } from '../src/services/redactionEngine';
@@ -39,10 +37,9 @@ export default function DashboardScreen() {
     const asset = result.assets[0];
     setBusy(true);
     try {
-      // Always re-copy into a stable cache path for WebView / pdf-lib access.
       const cachedUri = await cachePdfUri(asset.uri);
       await Haptic.success();
-      openThermalScan(cachedUri, asset.name?.replace(/\.pdf$/i, '') || 'Evidence');
+      openThermalScan(cachedUri, asset.name?.replace(/\.pdf$/i, '') || 'Document');
     } catch {
       await Haptic.error();
     } finally {
@@ -69,7 +66,7 @@ export default function DashboardScreen() {
       const uris = result.assets.map((a) => a.uri);
       const pdfUri = await imagesToPdf(uris);
       await Haptic.success();
-      openThermalScan(pdfUri, 'Secure Capture');
+      openThermalScan(pdfUri, 'Scan');
     } catch {
       await Haptic.error();
     } finally {
@@ -81,62 +78,74 @@ export default function DashboardScreen() {
     <ScreenBackground>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         <View style={styles.nav}>
-          <View style={styles.brandRow}>
-            <Ionicons name="shield-checkmark" size={22} color={AppleDS.accent} />
-            <Text style={[typography.navBrand, { marginLeft: 8 }]}>RedactPDF</Text>
-          </View>
-          <Badge text="Vault Shield On" />
+          <Text style={typography.navBrand}>Redact PDF</Text>
         </View>
 
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={typography.hero}>
-            {'Zero-Trace Pixel\nDestruction & Audit Shield'}
-          </Text>
-          <Text style={[typography.body, { marginTop: 12 }]}>
-            Forensic burn-and-flatten for SSNs, balances, and identities — pixels
-            destroyed on-device, metadata wiped before export.
+          <Text style={styles.subtitle}>
+            Select a document to hide private details.
           </Text>
 
           <View style={{ height: 28 }} />
           <ActionCard
-            icon="aperture"
-            title="Vault Import"
-            subtitle="Pull PDFs into the destruction vault"
+            icon="document-text"
+            title="Select Document"
+            subtitle="PDF files, statements, tax forms"
             isPrimary
             onPress={busy ? () => undefined : onOpenPdf}
           />
-          <View style={{ height: 14 }} />
+          <View style={{ height: 12 }} />
           <ActionCard
-            icon="hardware-chip"
-            title="Secure Enclave Capture"
-            subtitle="Hardware-secured import of scans & photos"
+            icon="camera"
+            title="Select Photo or Scan"
+            subtitle="Images, screenshots, camera scans"
             onPress={busy ? () => undefined : onOpenPhotos}
           />
-          <View style={{ height: 28 }} />
-          <TrustBanner text="Zero Cloud Processing • EXIF / Author / Revisions Cleared On Export" />
+
+          <View style={styles.privacyNote}>
+            <Ionicons
+              name="lock-closed"
+              size={14}
+              color={AppleDS.labelTertiary}
+            />
+            <Text style={styles.privacyText}>
+              Your documents never leave your phone.
+            </Text>
+          </View>
         </ScrollView>
       </SafeAreaView>
-      {busy ? <LoadingOverlay message="Sealing into vault…" /> : null}
+      {busy ? <LoadingOverlay message="Opening document…" /> : null}
     </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
   nav: {
-    paddingHorizontal: 20,
+    paddingHorizontal: AppleDS.layout.screenPadding,
     paddingTop: 8,
     paddingBottom: 4,
+  },
+  content: {
+    paddingHorizontal: AppleDS.layout.screenPadding,
+    paddingTop: 12,
+    paddingBottom: 40,
+  },
+  subtitle: {
+    ...typography.body,
+    marginTop: 4,
+  },
+  privacyNote: {
+    marginTop: 32,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    gap: 8,
   },
-  brandRow: { flexDirection: 'row', alignItems: 'center' },
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 40,
+  privacyText: {
+    ...typography.footnote,
+    color: AppleDS.labelTertiary,
   },
 });

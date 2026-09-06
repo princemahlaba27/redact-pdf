@@ -126,45 +126,16 @@ function unionRect(a: NormalizedRect, b: NormalizedRect): NormalizedRect {
 }
 
 /**
- * Best-effort on-device PII detection for text PDFs by scanning embedded strings.
- * Scanned/image-only PDFs should use Manual Draw (or add ML Kit in a dev build).
+ * @deprecated Fake-coordinate heuristic removed.
+ * Use PdfPageViewer token extraction + classifyTextTokens instead.
+ * Kept as a no-op so older call sites fail closed (no mock boxes).
  */
 export async function detectPiiInPdf(
-  pdfUri: string,
-  pageIndex: number,
-  style: RedactionStyle,
+  _pdfUri: string,
+  _pageIndex: number,
+  _style: RedactionStyle,
 ): Promise<RedactionRect[]> {
-  const bytes = await readPdfBytes(pdfUri);
-  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-  if (pageIndex < 0 || pageIndex >= doc.getPageCount()) return [];
-
-  const raw = new TextDecoder('latin1').decode(bytes);
-  const candidates: string[] = [];
-  for (const re of [SSN, EMAIL, PHONE, CARD]) {
-    for (const m of raw.matchAll(new RegExp(re.source, 'g'))) {
-      const value = m[0];
-      if (re === CARD) {
-        const digits = value.replace(/\D/g, '');
-        if (digits.length < 13 || digits.length > 19 || !luhn(digits)) continue;
-      }
-      candidates.push(value);
-    }
-  }
-
-  if (candidates.length === 0) return [];
-
-  const unique = [...new Set(candidates)].slice(0, 8);
-  return unique.map((_, i) => ({
-    id: uuidv4(),
-    pageIndex,
-    style,
-    rect: {
-      x: 0.08,
-      y: 0.18 + i * 0.07,
-      width: 0.84,
-      height: 0.045,
-    },
-  }));
+  return [];
 }
 
 export async function readPdfBytes(uri: string): Promise<Uint8Array> {
@@ -265,30 +236,58 @@ function applyRedaction(page: PDFPage, redaction: RedactionRect) {
   });
 }
 
+/**
+ * Build a PDF from image URIs. Images are normalized upright via
+ * expo-image-manipulator so EXIF orientation never flips the page.
+ */
 export async function imagesToPdf(imageUris: string[]): Promise<string> {
+  const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
   const doc = await PDFDocument.create();
   for (const uri of imageUris) {
-    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-    const imgBytes = base64ToBytes(base64);
-    const lower = uri.toLowerCase();
-    const image = lower.includes('.png')
-      ? await doc.embedPng(imgBytes)
-      : await doc.embedJpg(imgBytes);
-    const page = doc.addPage([612, 792]);
-    const maxW = 612 - 48;
-    const maxH = 792 - 48;
-    const scale = Math.min(maxW / image.width, maxH / image.height);
-    const w = image.width * scale;
-    const h = image.height * scale;
-    page.drawImage(image, {
-      x: (612 - w) / 2,
-      y: (792 - h) / 2,
-      width: w,
-      height: h,
+    // Force upright pixels — strips EXIF orientation ambiguity.
+    const fixed = await manipulateAsync(uri, [], {
+      compress: 0.92,
+      format: SaveFormat.JPEG,
     });
+    const base64 = await FileSystem.readAsStringAsync(fixed.uri, {
+      encoding: 'base64',
+    });
+    const imgBytes = base64ToBytes(base64);
+    const image = await doc.embedJpg(imgBytes);
+    const pageW = image.width;
+    const pageH = image.height;
+    const page = doc.addPage([pageW, pageH]);
+    page.drawImage(image, { x: 0, y: 0, width: pageW, height: pageH });
   }
   const out = await doc.save();
   const outUri = `${FileSystem.cacheDirectory}Scan_${Date.now()}.pdf`;
+  await FileSystem.writeAsStringAsync(outUri, bytesToBase64(out), {
+    encoding: 'base64',
+  });
+  return outUri;
+}
+
+/** Rebuild a PDF from burned JPEG page rasters (true pixel flatten). */
+export async function burnedPagesToPdf(
+  pages: { base64: string; width: number; height: number }[],
+): Promise<string> {
+  const doc = await PDFDocument.create();
+  for (const pageData of pages) {
+    const imgBytes = base64ToBytes(pageData.base64);
+    const image = await doc.embedJpg(imgBytes);
+    const pageW = pageData.width || image.width;
+    const pageH = pageData.height || image.height;
+    const page = doc.addPage([pageW, pageH]);
+    page.drawImage(image, { x: 0, y: 0, width: pageW, height: pageH });
+  }
+  doc.setTitle('Redacted Document');
+  doc.setAuthor('RedactPDF');
+  doc.setSubject('');
+  doc.setKeywords([]);
+  doc.setProducer('RedactPDF');
+  doc.setCreator('RedactPDF');
+  const out = await doc.save({ useObjectStreams: false });
+  const outUri = `${FileSystem.cacheDirectory}RedactPDF_${Date.now()}.pdf`;
   await FileSystem.writeAsStringAsync(outUri, bytesToBase64(out), {
     encoding: 'base64',
   });

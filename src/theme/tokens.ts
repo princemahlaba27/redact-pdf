@@ -1,46 +1,47 @@
 import { ColorValue } from 'react-native';
 
 /**
- * Obsidian forensic vault palette — Zero-Trace Pixel Destruction.
- * Surfaces: #0A0A0C · Dividers: #1F242F · High-contrast type.
+ * Native Apple dark utility palette — pitch black canvas, system gray cards.
  */
 export const AppleDS = {
-  canvas: '#0A0A0C',
-  surface: '#0A0A0C',
-  surfaceElevated: '#101014',
-  surfaceGrouped: '#141418',
+  canvas: '#000000',
+  surface: '#000000',
+  surfaceElevated: '#1C1C1E',
+  surfaceGrouped: '#1C1C1E',
 
   labelPrimary: '#FFFFFF',
-  labelSecondary: 'rgba(255,255,255,0.68)',
-  labelTertiary: 'rgba(255,255,255,0.45)',
-  labelQuaternary: 'rgba(255,255,255,0.28)',
+  labelSecondary: 'rgba(235,235,245,0.6)',
+  labelTertiary: 'rgba(235,235,245,0.4)',
+  labelQuaternary: 'rgba(235,235,245,0.28)',
 
-  separator: '#1F242F',
-  separatorOpaque: '#1F242F',
+  separator: 'rgba(84,84,88,0.65)',
+  separatorOpaque: '#38383A',
 
-  accent: '#0A85FF',
-  accentMuted: 'rgba(10,133,255,0.18)',
-  success: '#33D66B',
-  successMuted: 'rgba(51,214,107,0.16)',
-  danger: '#FF3B30',
-  amber: '#E8A23A',
+  accent: '#0A84FF',
+  accentMuted: 'rgba(10,132,255,0.18)',
+  success: '#30D158',
+  successMuted: 'rgba(48,209,88,0.16)',
+  danger: '#FF453A',
+  amber: '#FFD60A',
+  labelMuted: 'rgba(235,235,245,0.4)',
 
   spacing: { xxs: 4, xs: 8, sm: 12, md: 16, lg: 20, xl: 24, xxl: 32, xxxl: 40 },
-  radius: { sm: 12, md: 16, lg: 20, xl: 24, icon: 14 },
-  layout: { minTouch: 44, screenPadding: 20, cardPadding: 18, iconSize: 52 },
+  radius: { sm: 10, md: 12, lg: 14, xl: 18, icon: 12 },
+  layout: { minTouch: 44, screenPadding: 24, cardPadding: 16, iconSize: 44 },
 } as const;
 
 export const typography = {
   hero: {
-    fontSize: 34,
+    fontSize: 28,
     fontWeight: '700' as const,
-    lineHeight: 40,
-    letterSpacing: -0.5,
+    lineHeight: 34,
+    letterSpacing: -0.4,
     color: AppleDS.labelPrimary,
   },
   navBrand: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700' as const,
+    letterSpacing: -0.3,
     color: AppleDS.labelPrimary,
   },
   title: {

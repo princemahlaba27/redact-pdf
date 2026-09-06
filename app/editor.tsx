@@ -14,8 +14,12 @@ import { runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BurnScanline } from '../src/components/BurnScanline';
-import { PdfPageViewer } from '../src/components/PdfPageViewer';
+import {
+  PdfPageViewer,
+  type PdfPageViewerHandle,
+} from '../src/components/PdfPageViewer';
 import { SecurityShieldBanner } from '../src/components/SecurityShieldBanner';
+import { ThreatAuditDrawer } from '../src/components/ThreatAuditDrawer';
 import {
   FloatingToolbar,
   LoadingOverlay,
@@ -33,24 +37,28 @@ import {
   REDACTION_STYLE_COLOR,
   REDACTION_STYLE_LABEL,
 } from '../src/models/redaction';
+import type { TextToken, ThreatItem } from '../src/models/threat';
 import { Haptic } from '../src/services/haptics';
 import {
+  burnedPagesToPdf,
   burnAndFlatten,
   cachePdfUri,
-  detectPiiInPdf,
   getPdfPageCount,
   uuidv4,
 } from '../src/services/redactionEngine';
 import { useSubscription } from '../src/services/subscription';
 import { useThermalSession } from '../src/services/thermalSession';
+import {
+  classifyTextTokens,
+  threatsToRedactions,
+} from '../src/services/threatClassifier';
 import { AppleDS, typography } from '../src/theme/tokens';
 
-function statusPillCopy(count: number): string {
-  if (count <= 0) {
-    return 'Sanitized: 0 Threats Neutralized • Metadata Wipe Armed';
+function statusCopy(total: number, selected: number): string {
+  if (total <= 0) {
+    return 'No private details found · Document details erased on export';
   }
-  const n = count === 1 ? '1 Threat Neutralized' : `${count} Threats Neutralized`;
-  return `Sanitized: ${n} • Metadata Wiped`;
+  return `${selected}/${total} items hidden · Document details erased on export`;
 }
 
 export default function EditorScreen() {
@@ -63,13 +71,17 @@ export default function EditorScreen() {
   const isSubscribed = useSubscription((s) => s.isSubscribed);
   const consumePending = useThermalSession((s) => s.consumePending);
   const pendingExport = useRef(false);
+  const viewerRef = useRef<PdfPageViewerHandle>(null);
 
   const [renderUri, setRenderUri] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(1);
   const [pageIndex, setPageIndex] = useState(0);
   const [mode, setMode] = useState<RedactionMode>('manual');
   const [style, setStyle] = useState<RedactionStyle>('black');
-  const [redactions, setRedactions] = useState<RedactionRect[]>([]);
+  const [manualRedactions, setManualRedactions] = useState<RedactionRect[]>([]);
+  const [threats, setThreats] = useState<ThreatItem[]>([]);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [focusPulseId, setFocusPulseId] = useState<string | null>(null);
   const seededRef = useRef(false);
   const [detecting, setDetecting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -84,7 +96,9 @@ export default function EditorScreen() {
     const seeded = consumePending();
     if (seeded.length) {
       seededRef.current = true;
-      setRedactions(seeded);
+      setManualRedactions(
+        seeded.map((r) => ({ ...r, source: r.source ?? 'thermal' })),
+      );
     }
   }, [consumePending]);
 
@@ -115,10 +129,37 @@ export default function EditorScreen() {
     };
   }, [uri]);
 
+  const threatRedactions = useMemo(
+    () => threatsToRedactions(threats, style),
+    [threats, style],
+  );
+
+  const redactions = useMemo(
+    () => [...threatRedactions, ...manualRedactions],
+    [threatRedactions, manualRedactions],
+  );
+
   const pageRedactions = useMemo(
     () => redactions.filter((r) => r.pageIndex === pageIndex),
     [redactions, pageIndex],
   );
+
+  const selectedCount = threats.filter((t) => t.enabled).length;
+
+  const onTokensExtracted = useCallback((tokens: TextToken[], pages: number) => {
+    if (pages > 0) setPageCount(pages);
+    setDetecting(true);
+    try {
+      const found = classifyTextTokens(tokens);
+      setThreats(found);
+      if (found.length) {
+        setAuditOpen(true);
+        void Haptic.success();
+      }
+    } finally {
+      setDetecting(false);
+    }
+  }, []);
 
   const onCanvasLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
@@ -132,12 +173,12 @@ export default function EditorScreen() {
     void Haptic.medium();
   }, []);
 
-  const addRedaction = useCallback(
+  const addManualRedaction = useCallback(
     (rect: NormalizedRect) => {
       if (rect.width < 0.01 || rect.height < 0.01) return;
-      setRedactions((prev) => [
+      setManualRedactions((prev) => [
         ...prev,
-        { id: uuidv4(), pageIndex, rect, style },
+        { id: uuidv4(), pageIndex, rect, style, source: 'manual' },
       ]);
       void Haptic.medium();
     },
@@ -161,7 +202,7 @@ export default function EditorScreen() {
     const current = draftRef.current;
     draftRef.current = null;
     setDraft(null);
-    if (current) addRedaction(current);
+    if (current) addManualRedaction(current);
   };
 
   const pan = useMemo(
@@ -194,32 +235,30 @@ export default function EditorScreen() {
           'worklet';
           runOnJS(commitDraft)();
         }),
-    [mode, canvasSize.width, canvasSize.height, addRedaction, pulseBurnHaptic],
+    [mode, canvasSize.width, canvasSize.height, addManualRedaction, pulseBurnHaptic],
   );
-
-  const runSmart = async () => {
-    if (!renderUri || detecting) return;
-    setDetecting(true);
-    try {
-      const found = await detectPiiInPdf(renderUri, pageIndex, style);
-      setRedactions((prev) => [...prev, ...found]);
-      if (found.length) await Haptic.success();
-      else await Haptic.warning();
-    } catch {
-      await Haptic.error();
-    } finally {
-      setDetecting(false);
-    }
-  };
 
   const onModeChange = async (next: RedactionMode) => {
     setMode(next);
     await Haptic.selection();
-    if (next === 'smart') await runSmart();
+    if (next === 'smart') {
+      setAuditOpen(true);
+      if (threats.length === 0) await Haptic.warning();
+    }
   };
 
   const undo = async () => {
-    setRedactions((prev) => prev.slice(0, -1));
+    if (manualRedactions.length) {
+      setManualRedactions((prev) => prev.slice(0, -1));
+    } else {
+      setThreats((prev) => {
+        const armed = [...prev].reverse().find((t) => t.enabled);
+        if (!armed) return prev;
+        return prev.map((t) =>
+          t.id === armed.id ? { ...t, enabled: false } : t,
+        );
+      });
+    }
     await Haptic.selection();
   };
 
@@ -227,12 +266,26 @@ export default function EditorScreen() {
     if (!renderUri) return;
     setExporting(true);
     try {
-      const outUri = await burnAndFlatten(renderUri, redactions);
+      let outUri: string;
+      try {
+        // Prefer true pixel burn: rasterize each page with blackouts baked in.
+        const rasters = await viewerRef.current!.burnPages(redactions);
+        outUri = await burnedPagesToPdf(
+          rasters.map((p) => ({
+            base64: p.base64,
+            width: p.width,
+            height: p.height,
+          })),
+        );
+      } catch {
+        // Fallback: opaque vector fills + metadata wipe.
+        outUri = await burnAndFlatten(renderUri, redactions);
+      }
       await Haptic.success();
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(outUri, {
           mimeType: 'application/pdf',
-          dialogTitle: `Sanitized ${title || 'Document'}`,
+          dialogTitle: `Save ${title || 'Document'}`,
           UTI: 'com.adobe.pdf',
         });
       }
@@ -265,13 +318,33 @@ export default function EditorScreen() {
     }, [isSubscribed, doExport]),
   );
 
+  const onToggleThreat = (id: string, enabled: boolean) => {
+    setThreats((prev) => prev.map((t) => (t.id === id ? { ...t, enabled } : t)));
+  };
+
+  const onToggleAllThreats = (enabled: boolean) => {
+    setThreats((prev) => prev.map((t) => ({ ...t, enabled })));
+  };
+
+  const onFocusThreat = (threat: ThreatItem) => {
+    setPageIndex(threat.pageIndex);
+    setFocusPulseId(threat.id);
+    setTimeout(() => setFocusPulseId(null), 1200);
+    void Haptic.selection();
+  };
+
   if (!uri) {
     return (
       <ScreenBackground>
         <SafeAreaView style={styles.center}>
-          <Text style={typography.body}>No vault artifact loaded.</Text>
+          <Text style={typography.body}>No document loaded.</Text>
           <Pressable onPress={() => router.back()}>
-            <Text style={[typography.headline, { color: AppleDS.accent, marginTop: 12 }]}>
+            <Text
+              style={[
+                typography.headline,
+                { color: AppleDS.accent, marginTop: 12 },
+              ]}
+            >
               Go back
             </Text>
           </Pressable>
@@ -317,15 +390,27 @@ export default function EditorScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.statusPill}>
+        <Pressable
+          onPress={() => {
+            void Haptic.selection();
+            setAuditOpen(true);
+          }}
+          style={styles.statusPill}
+        >
           <View style={styles.statusDot} />
           <Text style={styles.statusText} numberOfLines={2}>
-            {statusPillCopy(redactions.length)}
+            {statusCopy(threats.length, selectedCount)}
           </Text>
-        </View>
+          <Ionicons name="chevron-up" size={16} color={AppleDS.success} />
+        </Pressable>
 
         <View style={styles.canvas} onLayout={onCanvasLayout}>
-          <PdfPageViewer uri={activeUri} pageIndex={pageIndex} />
+          <PdfPageViewer
+            ref={viewerRef}
+            uri={activeUri}
+            pageIndex={pageIndex}
+            onTokensExtracted={onTokensExtracted}
+          />
           <GestureDetector gesture={pan}>
             <View style={StyleSheet.absoluteFill} pointerEvents="box-only">
               {pageRedactions.map((r) => (
@@ -342,6 +427,8 @@ export default function EditorScreen() {
                         r.style === 'blur'
                           ? 'rgba(80,80,80,0.82)'
                           : REDACTION_STYLE_COLOR[r.style],
+                      borderWidth: focusPulseId === r.id ? 2 : 0,
+                      borderColor: AppleDS.amber,
                     },
                   ]}
                 />
@@ -382,7 +469,9 @@ export default function EditorScreen() {
             <Ionicons
               name="chevron-back"
               size={22}
-              color={pageIndex <= 0 ? AppleDS.labelQuaternary : AppleDS.labelPrimary}
+              color={
+                pageIndex <= 0 ? AppleDS.labelQuaternary : AppleDS.labelPrimary
+              }
             />
           </Pressable>
           <Text style={typography.captionMedium}>
@@ -416,7 +505,10 @@ export default function EditorScreen() {
                 <Text
                   style={[
                     typography.captionMedium,
-                    { color: mode === m ? AppleDS.accent : AppleDS.labelSecondary },
+                    {
+                      color:
+                        mode === m ? AppleDS.accent : AppleDS.labelSecondary,
+                    },
                   ]}
                 >
                   {REDACTION_MODE_LABEL[m]}
@@ -441,7 +533,10 @@ export default function EditorScreen() {
               />
             </Pressable>
 
-            <Pressable onPress={() => void undo()} disabled={redactions.length === 0}>
+            <Pressable
+              onPress={() => void undo()}
+              disabled={redactions.length === 0}
+            >
               <Ionicons
                 name="arrow-undo"
                 size={18}
@@ -454,15 +549,25 @@ export default function EditorScreen() {
             </Pressable>
           </View>
           <Text style={[typography.caption, { marginTop: 6, textAlign: 'center' }]}>
-            Tool: {REDACTION_STYLE_LABEL[style]}
+            Ink: {REDACTION_STYLE_LABEL[style]}
           </Text>
         </FloatingToolbar>
       </SafeAreaView>
 
-      {loadingDoc ? <LoadingOverlay message="Opening vault artifact…" /> : null}
-      {detecting ? <LoadingOverlay message="Scanning threat signatures…" /> : null}
-      {exporting ? <LoadingOverlay message="Burning pixels & wiping metadata…" /> : null}
+      {loadingDoc ? <LoadingOverlay message="Opening document…" /> : null}
+      {detecting ? <LoadingOverlay message="Finding private details…" /> : null}
+      {exporting ? (
+        <LoadingOverlay message="Applying permanent blackout…" />
+      ) : null}
       <SecurityShieldBanner visible={bannerVisible} onDismiss={dismissBanner} />
+      <ThreatAuditDrawer
+        visible={auditOpen}
+        threats={threats}
+        onClose={() => setAuditOpen(false)}
+        onToggle={onToggleThreat}
+        onToggleAll={onToggleAllThreats}
+        onFocusThreat={onFocusThreat}
+      />
     </ScreenBackground>
   );
 }
@@ -489,14 +594,14 @@ const styles = StyleSheet.create({
     color: AppleDS.labelTertiary,
   },
   statusPill: {
-    marginHorizontal: 16,
-    marginTop: 10,
+    marginHorizontal: 24,
+    marginTop: 12,
     marginBottom: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: 'rgba(51,214,107,0.06)',
-    borderWidth: 1,
+    backgroundColor: AppleDS.surfaceElevated,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: AppleDS.separator,
     flexDirection: 'row',
     alignItems: 'center',
@@ -511,7 +616,7 @@ const styles = StyleSheet.create({
   statusText: {
     ...typography.captionMedium,
     flex: 1,
-    color: 'rgba(200,255,220,0.92)',
+    color: AppleDS.labelSecondary,
     lineHeight: 16,
   },
   exportBtn: {
@@ -530,7 +635,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: AppleDS.surfaceElevated,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: AppleDS.separator,
   },
   rect: { position: 'absolute', overflow: 'hidden' },
@@ -552,12 +657,12 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: AppleDS.separator,
   },
   segActive: {
     backgroundColor: AppleDS.accentMuted,
-    borderColor: 'rgba(10,133,255,0.4)',
+    borderColor: 'rgba(10,132,255,0.4)',
   },
   styleDotWrap: { padding: 4 },
   styleDot: {

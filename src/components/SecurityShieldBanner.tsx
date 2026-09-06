@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppleDS, typography } from '../theme/tokens';
 
 const MESSAGE =
-  "🛡️ Security Shield Active: Screenshots are disabled to protect unredacted sensitive data. Tap 'Export' to generate a sanitized file.";
+  'Screenshots are blocked while you edit so private details stay on this screen. Tap Export when you are ready to save.';
 
 type Props = {
   visible: boolean;
@@ -60,7 +60,7 @@ export function SecurityShieldBanner({ visible, onDismiss }: Props) {
           <Ionicons name="shield-checkmark" size={22} color={AppleDS.success} />
         </View>
         <View style={styles.copy}>
-          <Text style={styles.title}>Security Shield Active</Text>
+          <Text style={styles.title}>Screenshots Blocked</Text>
           <Text style={styles.body}>{MESSAGE}</Text>
         </View>
         <Ionicons name="close" size={18} color={AppleDS.labelTertiary} />

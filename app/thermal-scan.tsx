@@ -23,8 +23,8 @@ import { AppleDS, typography } from '../src/theme/tokens';
 type Phase = 'loading' | 'scanning' | 'armed' | 'burning' | 'shredded';
 
 /**
- * TikTok-native Thermal Vulnerability Scan.
- * Laser sweep → auto-target HUD → Execute Deep Sanitization → editor.
+ * TikTok-native Quick Privacy Scan.
+ * Laser sweep → auto-target HUD → Hide Private Details → editor.
  */
 export default function ThermalScanScreen() {
   const router = useRouter();
@@ -212,8 +212,8 @@ export default function ThermalScanScreen() {
 
           {phase === 'shredded' ? (
             <Animated.View style={[styles.shredBanner, { opacity: shredOpacity }]}>
-              <Text style={styles.shredTitle}>0 Bytes Recoverable • Pixels Flattened</Text>
-              <Text style={styles.shredSub}>Threats permanently burned into the vault artifact.</Text>
+              <Text style={styles.shredTitle}>Private details hidden</Text>
+              <Text style={styles.shredSub}>Blackout is ready. You can review and export next.</Text>
             </Animated.View>
           ) : null}
         </View>
@@ -236,7 +236,7 @@ export default function ThermalScanScreen() {
                   phase !== 'armed' && { opacity: 0.55 },
                 ]}
               >
-                <Text style={styles.executeText}>Execute Deep Sanitization</Text>
+                <Text style={styles.executeText}>Hide Private Details</Text>
               </Pressable>
             </Animated.View>
           ) : null}
