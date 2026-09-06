@@ -47,23 +47,26 @@ export function buildPdfBridgeHtml(): string {
     }
 
     /**
-     * Convert a PDF-user-space Y (bottom-left origin, normalized 0–1) to
-     * UI top-left Y using the explicit inversion formula:
-     *   renderedY = (pageHeight - (visionY * pageHeight)) - (boxH * pageHeight)
-     * which in normalized form is:  uiY = 1 - visionY - boxH
+     * Explicit Y flip (PDF bottom-left → screen top-left):
+     *   screenY = viewportHeight - y - height
+     * Normalized: uiY = 1 - (y / pageH) - (height / pageH)
      */
-    function invertPdfY(visionYNorm, boxHNorm) {
-      return 1 - visionYNorm - boxHNorm;
+    function screenYFromPdf(y, height, pageH) {
+      return pageH - y - height;
     }
 
     /**
      * Convert a pdf.js text item into a UI-normalized rect (origin top-left).
      *
-     * PDF user-space is bottom-left. We measure the glyph box there, then
-     * map through viewport.convertToViewportRectangle which applies /Rotate
-     * and flips Y into top-left canvas space. Equivalent normalized form:
-     *   { x, y: 1 - y - height, width, height }
+     * Spec metrics from getTextContent:
+     *   x = item.transform[4]
+     *   y = item.transform[5]
+     *   width = item.width
+     *   height = font size from transform (or item.height)
+     *   screenY = viewportHeight - y - height
      *
+     * Prefer viewport.convertToViewportRectangle when present so /Rotate is
+     * honored; otherwise apply the explicit screenY formula above.
      * Returns null when there are no real glyph metrics — never invents boxes.
      */
     function itemToUiRect(item, viewport) {
@@ -71,65 +74,72 @@ export function buildPdfBridgeHtml(): string {
       if (!str) return null;
 
       const t = item.transform; // [a,b,c,d,e,f] PDF user space
-      const fontH = Math.sqrt(t[2] * t[2] + t[3] * t[3]) || 0;
-      const wPdf = typeof item.width === 'number' ? item.width : 0;
-      const hPdf = fontH || (typeof item.height === 'number' ? item.height : 0);
-      if (!(wPdf > 0) || !(hPdf > 0)) return null;
+      if (!t || t.length < 6) return null;
 
-      // PDF user-space box (origin bottom-left; baseline at t[5]).
-      const x1 = t[4];
-      const y1 = t[5];
-      const x2 = t[4] + wPdf;
-      const y2 = t[5] + hPdf;
+      // Exact pdf.js item metrics (no guesswork).
+      const x = t[4];
+      const y = t[5];
+      const fontH = Math.sqrt(t[2] * t[2] + t[3] * t[3]) || 0;
+      const width = typeof item.width === 'number' ? item.width : 0;
+      const height = fontH || (typeof item.height === 'number' ? item.height : 0);
+      if (!(width > 0) || !(height > 0)) return null;
 
       var vx1, vy1, vx2, vy2;
       if (typeof viewport.convertToViewportRectangle === 'function') {
-        var vr = viewport.convertToViewportRectangle([x1, y1, x2, y2]);
+        // Applies scale + /Rotate; result is already top-left canvas space.
+        var vr = viewport.convertToViewportRectangle([x, y, x + width, y + height]);
         vx1 = Math.min(vr[0], vr[2]);
         vy1 = Math.min(vr[1], vr[3]);
         vx2 = Math.max(vr[0], vr[2]);
         vy2 = Math.max(vr[1], vr[3]);
       } else {
-        // Explicit Vision-style invert when convert helper is unavailable.
+        // Explicit Vision / PDFKit-style invert when convert helper is missing.
         var pageW = viewport.width / (viewport.scale || 1);
         var pageH = viewport.height / (viewport.scale || 1);
-        var visionY = y1 / pageH;
-        var boxH = hPdf / pageH;
-        var uiY = invertPdfY(visionY, boxH);
-        var uiX = x1 / pageW;
-        var uiW = wPdf / pageW;
-        if (!isFinite(uiX) || !isFinite(uiY) || uiW < 0.002 || boxH < 0.002) return null;
+        var sx = x;
+        var sy = screenYFromPdf(y, height, pageH);
+        var uiX = sx / pageW;
+        var uiY = sy / pageH;
+        var uiW = width / pageW;
+        var uiH = height / pageH;
+        if (!isFinite(uiX) || !isFinite(uiY) || uiW < 0.002 || uiH < 0.002) return null;
         return {
           x: Math.min(Math.max(uiX, 0), 1),
           y: Math.min(Math.max(uiY, 0), 1),
           width: Math.min(Math.max(uiW, 0.004), 1),
-          height: Math.min(Math.max(boxH, 0.008), 1)
+          height: Math.min(Math.max(uiH, 0.008), 1)
         };
       }
 
       var pageWp = viewport.width;
       var pageHp = viewport.height;
-      var x = vx1 / pageWp;
-      var y = vy1 / pageHp;
-      var w = (vx2 - vx1) / pageWp;
-      var h = (vy2 - vy1) / pageHp;
-      if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h)) return null;
-      if (w < 0.002 || h < 0.002) return null;
-      x = Math.min(Math.max(x, 0), 1);
-      y = Math.min(Math.max(y, 0), 1);
-      w = Math.min(Math.max(w, 0.004), 1 - x);
-      h = Math.min(Math.max(h, 0.008), 1 - y);
-      return { x: x, y: y, width: w, height: h };
+      var nx = vx1 / pageWp;
+      var ny = vy1 / pageHp;
+      var nw = (vx2 - vx1) / pageWp;
+      var nh = (vy2 - vy1) / pageHp;
+      if (!isFinite(nx) || !isFinite(ny) || !isFinite(nw) || !isFinite(nh)) return null;
+      if (nw < 0.002 || nh < 0.002) return null;
+      nx = Math.min(Math.max(nx, 0), 1);
+      ny = Math.min(Math.max(ny, 0), 1);
+      nw = Math.min(Math.max(nw, 0.004), 1 - nx);
+      nh = Math.min(Math.max(nh, 0.008), 1 - ny);
+      return { x: nx, y: ny, width: nw, height: nh };
     }
 
     async function extractPageTokens(pageIndex0) {
       const page = await pdfDoc.getPage(pageIndex0 + 1);
       const viewport = pageViewport(page, 1);
-      const content = await page.getTextContent({ disableCombineTextItems: false });
+      // Exact page streams — includeMarkedContent keeps tagged text intact.
+      const content = await page.getTextContent({
+        includeMarkedContent: true,
+        disableCombineTextItems: false
+      });
       const tokens = [];
       const lines = [];
       for (const item of content.items) {
-        if (!item.str || !String(item.str).trim()) continue;
+        // Skip marked-content markers and empty strings — never invent boxes.
+        if (!item || typeof item.str !== 'string') continue;
+        if (!String(item.str).trim()) continue;
         const rect = itemToUiRect(item, viewport);
         if (!rect) continue; // no glyph metrics → no blackout box
         const midY = rect.y + rect.height / 2;

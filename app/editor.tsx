@@ -47,7 +47,6 @@ import {
   uuidv4,
 } from '../src/services/redactionEngine';
 import { useSubscription } from '../src/services/subscription';
-import { useThermalSession } from '../src/services/thermalSession';
 import {
   classifyTextTokens,
   threatsToRedactions,
@@ -69,7 +68,6 @@ export default function EditorScreen() {
 
   const { bannerVisible, dismissBanner } = useScreenProtection(true);
   const isSubscribed = useSubscription((s) => s.isSubscribed);
-  const consumePending = useThermalSession((s) => s.consumePending);
   const pendingExport = useRef(false);
   const viewerRef = useRef<PdfPageViewerHandle>(null);
 
@@ -82,7 +80,6 @@ export default function EditorScreen() {
   const [threats, setThreats] = useState<ThreatItem[]>([]);
   const [auditOpen, setAuditOpen] = useState(false);
   const [focusPulseId, setFocusPulseId] = useState<string | null>(null);
-  const seededRef = useRef(false);
   const [detecting, setDetecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [loadingDoc, setLoadingDoc] = useState(true);
@@ -90,17 +87,6 @@ export default function EditorScreen() {
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
   const lastBurnPulse = useRef(0);
-
-  useEffect(() => {
-    if (seededRef.current) return;
-    const seeded = consumePending();
-    if (seeded.length) {
-      seededRef.current = true;
-      setManualRedactions(
-        seeded.map((r) => ({ ...r, source: r.source ?? 'thermal' })),
-      );
-    }
-  }, [consumePending]);
 
   useEffect(() => {
     if (!uri) {

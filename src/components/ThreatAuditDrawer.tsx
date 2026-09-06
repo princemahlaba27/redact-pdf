@@ -159,12 +159,12 @@ export function ThreatAuditDrawer({
                         />
                       </Pressable>
                       <View style={styles.rowCopy}>
-                        <Text style={styles.rowBadgeInline}>{item.badge}</Text>
                         <Text style={styles.rowText} numberOfLines={2}>
+                          {item.enabled ? '[✓] ' : '[ ] '}
                           {item.displayText || item.text}
                         </Text>
                         <Text style={styles.rowMeta}>
-                          Page {item.pageIndex + 1}
+                          {item.badge} · Page {item.pageIndex + 1}
                         </Text>
                       </View>
                     </Pressable>
@@ -280,10 +280,6 @@ const styles = StyleSheet.create({
   },
   checkHit: { padding: 2 },
   rowCopy: { flex: 1, gap: 4 },
-  rowBadgeInline: {
-    ...typography.captionMedium,
-    color: AppleDS.labelTertiary,
-  },
   rowText: {
     ...typography.footnoteMedium,
     color: AppleDS.labelPrimary,

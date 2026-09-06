@@ -9,24 +9,33 @@ import { maskThreatText } from '../models/threat';
 import { uuidv4 } from './redactionEngine';
 
 /**
- * Deterministic matchers — only fire on real extracted token text.
- * Spec patterns:
- * - Currency: /(?:[\$€£R]\s?[\d,]+(?:\.\d{2})?)/g
- * - Card segments: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/
- * - Accounts: 8–18 digit runs
- * - Phones: local + intl
- * - SSN: \d{3}-\d{2}-\d{4}
+ * Strict high-intent private-data matchers — only fire on real extracted text.
+ * Zero invented coordinates: every hit inherits the token's real glyph rect.
  */
+/** Financial balances & totals (currency symbol OR thousands-grouped amount). */
 export const FINANCIAL_RE =
-  /(?:[$€£R]\s?[\d,]+(?:\.\d{2})?|\b\d{4}[-\s]?\d{4}[-\s]?\d{4}(?:[-\s]?\d{1,4})?\b|\b\d{8,18}\b)/g;
+  /(?:[$€£R]\s?[\d,]+(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})\b)/g;
 
-export const CONTACT_RE =
-  /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+/** Account / card digit runs (8–18 digits, optional single spaces or dashes). */
+export const ACCOUNT_RE = /\b\d(?:[ -]?\d){7,17}\b/g;
 
-export const IDENTITY_RE = /\b\d{3}-\d{2}-\d{4}\b|\b[A-Z]{1,3}\d{5,9}[A-Z0-9]?\b/g;
+/** Phone numbers (local + optional country code). */
+export const PHONE_RE =
+  /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g;
 
-const LABEL_RE =
-  /\b(?:Account\s*Name|Account\s*Holder|Account\s*(?:No|Number|#)|Balance\s*Due|Amount\s*Due|Total\s*Due|Customer\s*Name|Full\s*Name|Date\s*of\s*Birth|DOB|Billing\s*Address|Mailing\s*Address|Home\s*Address|SSN|Tax\s*ID|EIN)\s*[:#-]?\s*(.+)$/i;
+/** Email — still private; never invents a box without real text. */
+export const EMAIL_RE =
+  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+
+/** SSN-style identifiers. */
+export const IDENTITY_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+
+/** Reject lone calendar years mistaken for short account numbers. */
+export function isFourDigitYear(digits: string): boolean {
+  if (digits.length !== 4) return false;
+  const n = parseInt(digits, 10);
+  return n >= 1900 && n <= 2100;
+}
 
 function luhnOk(digits: string): boolean {
   let sum = 0;
@@ -84,28 +93,12 @@ function sliceRectForMatch(
   });
 }
 
-function financialBadge(value: string): ThreatBadge {
-  if (/[$€£R]/.test(value)) return 'Total / Balance';
+function accountBadge(value: string): ThreatBadge {
   const digits = value.replace(/\D/g, '');
-  if (digits.length >= 13 && digits.length <= 19) return 'Card Number';
+  if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) {
+    return 'Card Number';
+  }
   return 'Bank Account';
-}
-
-function contactBadge(value: string): ThreatBadge {
-  return value.includes('@') ? 'Email' : 'Phone Number';
-}
-
-function identityBadge(_value: string): ThreatBadge {
-  return 'ID Number';
-}
-
-function customBadge(labelLine: string): ThreatBadge {
-  if (/address/i.test(labelLine)) return 'Address';
-  if (/date|dob/i.test(labelLine)) return 'Date';
-  if (/name/i.test(labelLine)) return 'Name';
-  if (/account/i.test(labelLine)) return 'Bank Account';
-  if (/balance|total|amount/i.test(labelLine)) return 'Total / Balance';
-  return 'Private Field';
 }
 
 function pushUnique(out: ThreatItem[], item: ThreatItem) {
@@ -173,15 +166,16 @@ function matchCategory(
 }
 
 /**
- * Classify real PDF/OCR line tokens into Private Details.
+ * Classify real PDF.js / Vision line tokens into Private Details.
  * Input tokens MUST already be UI-space (top-left origin) and bound real text.
+ * If no token text matches a pattern, the result count is 0 — no phantom boxes.
  */
 export function classifyTextTokens(tokens: TextToken[]): ThreatItem[] {
   const out: ThreatItem[] = [];
 
   for (const token of tokens) {
     const text = token.text.replace(/\s+/g, ' ').trim();
-    if (text.length < 3) continue;
+    if (text.length < 2) continue;
     // Reject degenerate rects (blank / zero-area) — no phantom boxes.
     if (token.rect.width < 0.004 || token.rect.height < 0.004) continue;
 
@@ -190,47 +184,54 @@ export function classifyTextTokens(tokens: TextToken[]): ThreatItem[] {
       FINANCIAL_RE,
       { ...token, text },
       out,
-      financialBadge,
+      () => 'Total / Balance',
+    );
+
+    matchCategory(
+      'financial',
+      ACCOUNT_RE,
+      { ...token, text },
+      out,
+      accountBadge,
       (m) => {
         const digits = m.replace(/\D/g, '');
-        if (/[$€£R]/.test(m)) return true;
+        // Only flag account-length strings; never lone years like 2024–2026.
+        if (isFourDigitYear(digits)) return false;
+        if (digits.length < 8 || digits.length > 18) return false;
+        // Card-length runs must pass Luhn; shorter account runs are accepted.
         if (digits.length >= 13 && digits.length <= 19) return luhnOk(digits);
-        if (digits.length >= 8 && digits.length <= 18) return true;
-        return /[-\s]/.test(m) && digits.length >= 6;
+        return true;
       },
     );
 
-    matchCategory('contact', CONTACT_RE, { ...token, text }, out, contactBadge);
+    matchCategory(
+      'contact',
+      PHONE_RE,
+      { ...token, text },
+      out,
+      () => 'Phone Number',
+      (m) => {
+        const digits = m.replace(/\D/g, '');
+        if (digits.length < 10 || digits.length > 15) return false;
+        // Bare digit runs belong to account matching — phones need formatting.
+        if (/^\d+$/.test(m.trim())) return false;
+        // Luhn-valid card-length strings are accounts, not phones.
+        if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) {
+          return false;
+        }
+        return true;
+      },
+    );
+
+    matchCategory('contact', EMAIL_RE, { ...token, text }, out, () => 'Email');
 
     matchCategory(
       'identity',
       IDENTITY_RE,
       { ...token, text },
       out,
-      identityBadge,
-      (m) => {
-        if (/^\d{3}-\d{2}-\d{4}$/.test(m)) return true;
-        return /[A-Z]/.test(m) && /\d/.test(m) && m.length >= 6;
-      },
+      () => 'ID Number',
     );
-
-    const label = text.match(LABEL_RE);
-    if (label?.[1]?.trim()) {
-      const value = label[1].trim();
-      if (value.length >= 2) {
-        const idx = text.lastIndexOf(value);
-        pushUnique(
-          out,
-          makeItem(
-            'custom',
-            customBadge(text),
-            value.slice(0, 64),
-            token.pageIndex,
-            sliceRectForMatch(token.rect, text, idx, value.length),
-          ),
-        );
-      }
-    }
   }
 
   return out.sort(

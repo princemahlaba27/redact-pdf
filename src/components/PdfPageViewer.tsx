@@ -149,10 +149,13 @@ export const PdfPageViewer = forwardRef<PdfPageViewerHandle, Props>(
       }
     };
 
+    // Load PDF once when bytes are ready — page flips use __renderPage only.
+    // Re-loading on every pageIndex change would re-fire token extraction.
     useEffect(() => {
       if (!ready || !base64 || !webRef.current) return;
       injectLoad(base64, pageIndex + 1);
-    }, [base64, ready, pageIndex]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally omit pageIndex
+    }, [base64, ready]);
 
     return (
       <View style={[styles.wrap, style]}>

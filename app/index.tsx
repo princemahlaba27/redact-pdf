@@ -23,9 +23,10 @@ export default function DashboardScreen() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  const openThermalScan = (nextUri: string, nextTitle: string) => {
+  /** Open the editor directly — real pdf.js OCR runs there (no mock scan). */
+  const openEditor = (nextUri: string, nextTitle: string) => {
     router.push({
-      pathname: '/thermal-scan',
+      pathname: '/editor',
       params: { uri: nextUri, title: nextTitle },
     });
   };
@@ -43,7 +44,7 @@ export default function DashboardScreen() {
     try {
       const cachedUri = await cachePdfUri(asset.uri);
       await Haptic.success();
-      openThermalScan(
+      openEditor(
         cachedUri,
         asset.name?.replace(/\.pdf$/i, '') || 'Document',
       );
@@ -73,7 +74,7 @@ export default function DashboardScreen() {
       const uris = result.assets.map((a) => a.uri);
       const pdfUri = await imagesToPdf(uris);
       await Haptic.success();
-      openThermalScan(pdfUri, 'Scan');
+      openEditor(pdfUri, 'Scan');
     } catch {
       await Haptic.error();
     } finally {

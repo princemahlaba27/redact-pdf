@@ -4,19 +4,21 @@ import type { RedactionRect } from '../models/redaction';
 
 type ThermalSessionState = {
   pendingRedactions: RedactionRect[];
-  seedFromBurn: (rects: RedactionRect[]) => void;
+  /** @deprecated Mock thermal seeding removed — always a no-op. */
+  seedFromBurn: (_rects: RedactionRect[]) => void;
+  /** @deprecated Always returns [] — never invents blackout boxes. */
   consumePending: () => RedactionRect[];
 };
 
-/** Bridge: thermal burn → editor canvas seeds. */
-export const useThermalSession = create<ThermalSessionState>((set, get) => ({
+/**
+ * Legacy bridge stub. Theatrical thermal burns no longer seed the editor.
+ * Real boxes come only from pdf.js token extraction + classifyTextTokens.
+ */
+export const useThermalSession = create<ThermalSessionState>((set) => ({
   pendingRedactions: [],
-
-  seedFromBurn: (rects) => set({ pendingRedactions: rects }),
-
+  seedFromBurn: () => set({ pendingRedactions: [] }),
   consumePending: () => {
-    const next = get().pendingRedactions;
     set({ pendingRedactions: [] });
-    return next;
+    return [];
   },
 }));
