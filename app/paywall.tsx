@@ -83,7 +83,7 @@ export default function PaywallScreen() {
           </Animated.View>
 
           <Text style={[typography.title, { textAlign: 'center', marginTop: 16 }]}>
-            RedactPDF Pro
+            RedactPDF Audit Shield
           </Text>
           <Text
             style={[
@@ -91,22 +91,22 @@ export default function PaywallScreen() {
               { textAlign: 'center', marginTop: 8, marginHorizontal: 12 },
             ]}
           >
-            Unlock unlimited document exports and permanent metadata sanitization.
+            Zero-trace pixel destruction with forensic metadata wipe on every export.
           </Text>
 
           <View style={{ height: 28 }} />
           <SectionCard>
             <ValuePropRow
-              icon="download-outline"
-              text="Unlimited Flattened PDF Exports"
-            />
-            <ValuePropRow
-              icon="sparkles-outline"
-              text="Automated AI Detection (SSN, Financials, IDs)"
-            />
-            <ValuePropRow
               icon="flame-outline"
-              text="Permanent Pixel-Level Destruction (No copy/paste leaks)"
+              text="Unlimited burn-and-flatten PDF exports"
+            />
+            <ValuePropRow
+              icon="scan-outline"
+              text="On-device threat scan (SSN, balances, IDs)"
+            />
+            <ValuePropRow
+              icon="hardware-chip-outline"
+              text="EXIF / Author / Revisions wiped before share"
             />
           </SectionCard>
 

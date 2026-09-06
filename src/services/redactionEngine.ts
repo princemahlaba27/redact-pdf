@@ -3,6 +3,21 @@ import { PDFDocument, rgb, type PDFPage } from 'pdf-lib';
 
 import type { NormalizedRect, RedactionRect, RedactionStyle } from '../models/redaction';
 
+/**
+ * Copy a picked/external PDF into the app cache before rendering or reading.
+ * iOS security-scoped bookmarks often return an empty stream if accessed
+ * directly from external storage / Files app URIs.
+ */
+export async function cachePdfUri(sourceUri: string): Promise<string> {
+  const targetPath = `${FileSystem.cacheDirectory}active_render.pdf`;
+  const info = await FileSystem.getInfoAsync(targetPath);
+  if (info.exists) {
+    await FileSystem.deleteAsync(targetPath, { idempotent: true });
+  }
+  await FileSystem.copyAsync({ from: sourceUri, to: targetPath });
+  return targetPath;
+}
+
 const SSN = /\b\d{3}-\d{2}-\d{4}\b/;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const PHONE = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/;

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "RedactPDF",
-    "slug": "redactpdf",
+    "slug": "redact-pdf",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
@@ -15,10 +15,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.redactpdf.app",
+      "bundleIdentifier": "com.princemahlaba.redactpdf",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "RedactPDF needs photo access to import scanned documents for redaction.",
-        "NSCameraUsageDescription": "RedactPDF can capture document photos for redaction."
+        "NSCameraUsageDescription": "RedactPDF can capture document photos for redaction.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -31,7 +32,8 @@
       },
       "permissions": [
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_EXTERNAL_STORAGE"
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -42,7 +44,6 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-sharing",
       "expo-web-browser",
       [
         "expo-image-picker",
@@ -53,6 +54,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e8f10f30-fabd-4548-b98e-da51679ce2e2"
+      }
     }
   }
 }

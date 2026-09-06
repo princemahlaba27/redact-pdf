@@ -3,14 +3,14 @@ export type RedactionMode = 'smart' | 'manual';
 export type RedactionStyle = 'black' | 'blur' | 'white';
 
 export const REDACTION_MODE_LABEL: Record<RedactionMode, string> = {
-  smart: 'AI Detect',
-  manual: 'Manual Draw',
+  smart: 'Threat Scan',
+  manual: 'Burn Brush',
 };
 
 export const REDACTION_STYLE_LABEL: Record<RedactionStyle, string> = {
-  black: 'Solid Black',
-  blur: 'Gaussian Blur',
-  white: 'Solid White',
+  black: 'Pixel Burn',
+  blur: 'Obfuscate',
+  white: 'Whiteout',
 };
 
 export const REDACTION_STYLE_COLOR: Record<RedactionStyle, string> = {

@@ -14,7 +14,7 @@ import {
   TrustBanner,
 } from '../src/components/ui';
 import { Haptic } from '../src/services/haptics';
-import { imagesToPdf } from '../src/services/redactionEngine';
+import { cachePdfUri, imagesToPdf } from '../src/services/redactionEngine';
 import { AppleDS, typography } from '../src/theme/tokens';
 
 export default function DashboardScreen() {
@@ -37,8 +37,17 @@ export default function DashboardScreen() {
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    await Haptic.success();
-    openEditor(asset.uri, asset.name?.replace(/\.pdf$/i, '') || 'Document');
+    setBusy(true);
+    try {
+      // Always re-copy into a stable cache path for WebView / pdf-lib access.
+      const cachedUri = await cachePdfUri(asset.uri);
+      await Haptic.success();
+      openEditor(cachedUri, asset.name?.replace(/\.pdf$/i, '') || 'Evidence');
+    } catch {
+      await Haptic.error();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onOpenPhotos = async () => {
@@ -60,7 +69,7 @@ export default function DashboardScreen() {
       const uris = result.assets.map((a) => a.uri);
       const pdfUri = await imagesToPdf(uris);
       await Haptic.success();
-      openEditor(pdfUri, 'Scan');
+      openEditor(pdfUri, 'Secure Capture');
     } catch {
       await Haptic.error();
     } finally {
@@ -73,10 +82,10 @@ export default function DashboardScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         <View style={styles.nav}>
           <View style={styles.brandRow}>
-            <Ionicons name="document-text" size={22} color={AppleDS.accent} />
+            <Ionicons name="shield-checkmark" size={22} color={AppleDS.accent} />
             <Text style={[typography.navBrand, { marginLeft: 8 }]}>RedactPDF</Text>
           </View>
-          <Badge text="100% On-Device" />
+          <Badge text="Audit Shield On" />
         </View>
 
         <ScrollView
@@ -84,33 +93,33 @@ export default function DashboardScreen() {
           showsVerticalScrollIndicator={false}
         >
           <Text style={typography.hero}>
-            {'Sanitize documents.\nKeep data private.'}
+            {'Zero-Trace Pixel\nDestruction & Audit Shield'}
           </Text>
           <Text style={[typography.body, { marginTop: 12 }]}>
-            Permanently black out text, SSNs, and financials with on-device
-            pixel-burning.
+            Forensic burn-and-flatten for SSNs, balances, and identities — pixels
+            destroyed on-device, metadata wiped before export.
           </Text>
 
           <View style={{ height: 28 }} />
           <ActionCard
-            icon="document"
-            title="Open PDF Document"
-            subtitle="Contracts, tax forms, statements"
+            icon="aperture"
+            title="Vault Import"
+            subtitle="Pull PDFs into the destruction vault"
             isPrimary
             onPress={busy ? () => undefined : onOpenPdf}
           />
           <View style={{ height: 14 }} />
           <ActionCard
-            icon="images-outline"
-            title="Select Photo or Scan"
-            subtitle="Import scanned pages as PDF"
+            icon="hardware-chip"
+            title="Secure Enclave Capture"
+            subtitle="Hardware-secured import of scans & photos"
             onPress={busy ? () => undefined : onOpenPhotos}
           />
           <View style={{ height: 28 }} />
-          <TrustBanner text="Zero Cloud Processing • Metadata Flattened On Export" />
+          <TrustBanner text="Zero Cloud Processing • EXIF / Author / Revisions Cleared On Export" />
         </ScrollView>
       </SafeAreaView>
-      {busy ? <LoadingOverlay message="Preparing document…" /> : null}
+      {busy ? <LoadingOverlay message="Sealing into vault…" /> : null}
     </ScreenBackground>
   );
 }

@@ -15,11 +15,13 @@ import { runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
+import { BurnScanline } from '../src/components/BurnScanline';
 import {
   FloatingToolbar,
   LoadingOverlay,
   ScreenBackground,
 } from '../src/components/ui';
+import { SecurityShieldBanner } from '../src/components/SecurityShieldBanner';
 import type {
   NormalizedRect,
   RedactionMode,
@@ -31,9 +33,11 @@ import {
   REDACTION_STYLE_COLOR,
   REDACTION_STYLE_LABEL,
 } from '../src/models/redaction';
+import { useScreenProtection } from '../src/hooks/useScreenProtection';
 import { Haptic } from '../src/services/haptics';
 import {
   burnAndFlatten,
+  cachePdfUri,
   detectPiiInPdf,
   getPdfPageCount,
   uuidv4,
@@ -41,15 +45,25 @@ import {
 import { useSubscription } from '../src/services/subscription';
 import { AppleDS, typography } from '../src/theme/tokens';
 
+function sanitizationReport(count: number): string {
+  if (count <= 0) {
+    return 'Awaiting destruction • Metadata wipe armed (EXIF/Author/Revisions)';
+  }
+  const threat = count === 1 ? '1 Threat Neutralized' : `${count} Threats Neutralized`;
+  return `Sanitized: ${threat} • Metadata Wiped (EXIF/Author/Revisions: Cleared)`;
+}
+
 export default function EditorScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ uri: string; title: string }>();
   const uri = Array.isArray(params.uri) ? params.uri[0] : params.uri;
   const title = Array.isArray(params.title) ? params.title[0] : params.title;
 
+  const { bannerVisible, dismissBanner } = useScreenProtection(true);
   const isSubscribed = useSubscription((s) => s.isSubscribed);
   const pendingExport = useRef(false);
 
+  const [renderUri, setRenderUri] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(1);
   const [pageIndex, setPageIndex] = useState(0);
   const [mode, setMode] = useState<RedactionMode>('manual');
@@ -57,13 +71,39 @@ export default function EditorScreen() {
   const [redactions, setRedactions] = useState<RedactionRect[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [loadingDoc, setLoadingDoc] = useState(true);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
+  const lastBurnPulse = useRef(0);
 
   useEffect(() => {
-    if (!uri) return;
-    void getPdfPageCount(uri).then(setPageCount).catch(() => setPageCount(1));
+    if (!uri) {
+      setLoadingDoc(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingDoc(true);
+    void (async () => {
+      try {
+        // Re-cache into a stable local path before WebView / pdf-lib access.
+        const cached = await cachePdfUri(uri);
+        if (cancelled) return;
+        setRenderUri(cached);
+        const count = await getPdfPageCount(cached);
+        if (!cancelled) setPageCount(count);
+      } catch {
+        if (!cancelled) {
+          setRenderUri(uri);
+          setPageCount(1);
+        }
+      } finally {
+        if (!cancelled) setLoadingDoc(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [uri]);
 
   const pageRedactions = useMemo(
@@ -76,6 +116,13 @@ export default function EditorScreen() {
     setCanvasSize({ width, height });
   };
 
+  const pulseBurnHaptic = useCallback(() => {
+    const now = Date.now();
+    if (now - lastBurnPulse.current < 110) return;
+    lastBurnPulse.current = now;
+    void Haptic.medium();
+  }, []);
+
   const addRedaction = useCallback(
     (rect: NormalizedRect) => {
       if (rect.width < 0.01 || rect.height < 0.01) return;
@@ -83,14 +130,23 @@ export default function EditorScreen() {
         ...prev,
         { id: uuidv4(), pageIndex, rect, style },
       ]);
-      void Haptic.light();
+      void Haptic.medium();
     },
     [pageIndex, style],
   );
 
+  const beginDraft = (rect: NormalizedRect) => {
+    draftRef.current = rect;
+    setDraft(rect);
+    void Haptic.medium();
+  };
+
   const updateDraft = (rect: NormalizedRect | null) => {
     draftRef.current = rect;
     setDraft(rect);
+    if (rect && (rect.width > 0.01 || rect.height > 0.01)) {
+      pulseBurnHaptic();
+    }
   };
 
   const commitDraft = () => {
@@ -108,7 +164,7 @@ export default function EditorScreen() {
           'worklet';
           const x = e.x / canvasSize.width;
           const y = e.y / canvasSize.height;
-          runOnJS(updateDraft)({ x, y, width: 0, height: 0 });
+          runOnJS(beginDraft)({ x, y, width: 0, height: 0 });
         })
         .onUpdate((e) => {
           'worklet';
@@ -127,14 +183,14 @@ export default function EditorScreen() {
           'worklet';
           runOnJS(commitDraft)();
         }),
-    [mode, canvasSize.width, canvasSize.height, addRedaction],
+    [mode, canvasSize.width, canvasSize.height, addRedaction, pulseBurnHaptic],
   );
 
   const runSmart = async () => {
-    if (!uri || detecting) return;
+    if (!renderUri || detecting) return;
     setDetecting(true);
     try {
-      const found = await detectPiiInPdf(uri, pageIndex, style);
+      const found = await detectPiiInPdf(renderUri, pageIndex, style);
       setRedactions((prev) => [...prev, ...found]);
       if (found.length) await Haptic.success();
       else await Haptic.warning();
@@ -157,15 +213,15 @@ export default function EditorScreen() {
   };
 
   const doExport = useCallback(async () => {
-    if (!uri) return;
+    if (!renderUri) return;
     setExporting(true);
     try {
-      const outUri = await burnAndFlatten(uri, redactions);
+      const outUri = await burnAndFlatten(renderUri, redactions);
       await Haptic.success();
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(outUri, {
           mimeType: 'application/pdf',
-          dialogTitle: `Redacted ${title || 'Document'}`,
+          dialogTitle: `Sanitized ${title || 'Document'}`,
           UTI: 'com.adobe.pdf',
         });
       }
@@ -175,7 +231,7 @@ export default function EditorScreen() {
       setExporting(false);
       pendingExport.current = false;
     }
-  }, [uri, redactions, title]);
+  }, [renderUri, redactions, title]);
 
   const onExportPress = async () => {
     await Haptic.medium();
@@ -199,7 +255,7 @@ export default function EditorScreen() {
     return (
       <ScreenBackground>
         <SafeAreaView style={styles.center}>
-          <Text style={typography.body}>Missing document.</Text>
+          <Text style={typography.body}>No vault artifact loaded.</Text>
           <Pressable onPress={() => router.back()}>
             <Text style={[typography.headline, { color: AppleDS.accent, marginTop: 12 }]}>
               Go back
@@ -210,14 +266,24 @@ export default function EditorScreen() {
     );
   }
 
+  const activeUri = renderUri ?? uri;
   const pdfSource =
     Platform.OS === 'android'
-      ? { uri }
+      ? { uri: activeUri }
       : {
           html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1" />
             <style>html,body{margin:0;height:100%;background:#0D0D0E}</style></head>
-            <body><embed src="${uri}" type="application/pdf" width="100%" height="100%" /></body></html>`,
+            <body><embed src="${activeUri}" type="application/pdf" width="100%" height="100%" /></body></html>`,
         };
+
+  const draftPx = draft
+    ? {
+        left: draft.x * canvasSize.width,
+        top: draft.y * canvasSize.height,
+        width: draft.width * canvasSize.width,
+        height: draft.height * canvasSize.height,
+      }
+    : null;
 
   return (
     <ScreenBackground>
@@ -233,11 +299,18 @@ export default function EditorScreen() {
             <Text style={typography.body}>Cancel</Text>
           </Pressable>
           <Text style={[typography.footnoteMedium, styles.title]} numberOfLines={1}>
-            {title || 'Document'}
+            {title || 'Destruction Canvas'}
           </Text>
           <Pressable onPress={() => void onExportPress()} style={styles.exportBtn}>
             <Text style={[typography.captionMedium, { color: '#fff' }]}>Export</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.reportBar}>
+          <Ionicons name="flame" size={14} color="#FF6A45" />
+          <Text style={styles.reportText} numberOfLines={2}>
+            {sanitizationReport(redactions.length)}
+          </Text>
         </View>
 
         <View style={styles.canvas} onLayout={onCanvasLayout}>
@@ -268,20 +341,26 @@ export default function EditorScreen() {
                   ]}
                 />
               ))}
-              {draft ? (
+              {draft && draftPx ? (
                 <View
                   style={[
                     styles.rect,
                     {
-                      left: draft.x * canvasSize.width,
-                      top: draft.y * canvasSize.height,
-                      width: draft.width * canvasSize.width,
-                      height: draft.height * canvasSize.height,
+                      left: draftPx.left,
+                      top: draftPx.top,
+                      width: draftPx.width,
+                      height: draftPx.height,
                       backgroundColor: REDACTION_STYLE_COLOR[style],
-                      opacity: 0.85,
+                      opacity: 0.88,
                     },
                   ]}
-                />
+                >
+                  <BurnScanline
+                    active
+                    width={draftPx.width}
+                    height={draftPx.height}
+                  />
+                </View>
               ) : null}
             </View>
           </GestureDetector>
@@ -353,10 +432,6 @@ export default function EditorScreen() {
               />
             </Pressable>
 
-            <Text style={[typography.captionMedium, { flexShrink: 1 }]}>
-              {redactions.length} Redactions
-            </Text>
-
             <Pressable onPress={() => void undo()} disabled={redactions.length === 0}>
               <Ionicons
                 name="arrow-undo"
@@ -370,13 +445,15 @@ export default function EditorScreen() {
             </Pressable>
           </View>
           <Text style={[typography.caption, { marginTop: 6, textAlign: 'center' }]}>
-            Style: {REDACTION_STYLE_LABEL[style]}
+            Destruction style: {REDACTION_STYLE_LABEL[style]}
           </Text>
         </FloatingToolbar>
       </SafeAreaView>
 
-      {detecting ? <LoadingOverlay message="Scanning for sensitive data…" /> : null}
-      {exporting ? <LoadingOverlay message="Flattening & sanitizing…" /> : null}
+      {loadingDoc ? <LoadingOverlay message="Opening vault artifact…" /> : null}
+      {detecting ? <LoadingOverlay message="Scanning for threat signatures…" /> : null}
+      {exporting ? <LoadingOverlay message="Burning pixels & wiping metadata…" /> : null}
+      <SecurityShieldBanner visible={bannerVisible} onDismiss={dismissBanner} />
     </ScreenBackground>
   );
 }
@@ -391,6 +468,25 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   title: { flex: 1, textAlign: 'center' },
+  reportBar: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 72, 42, 0.08)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 72, 42, 0.28)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  reportText: {
+    ...typography.captionMedium,
+    flex: 1,
+    color: 'rgba(255, 210, 196, 0.92)',
+    lineHeight: 16,
+  },
   exportBtn: {
     backgroundColor: AppleDS.accent,
     paddingHorizontal: 16,
@@ -405,7 +501,7 @@ const styles = StyleSheet.create({
     backgroundColor: AppleDS.surface,
   },
   webview: { flex: 1, backgroundColor: AppleDS.surface },
-  rect: { position: 'absolute' },
+  rect: { position: 'absolute', overflow: 'hidden' },
   pageRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -417,6 +513,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    justifyContent: 'center',
   },
   seg: {
     paddingHorizontal: 10,
