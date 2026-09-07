@@ -4,7 +4,10 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 
-import { useSubscription } from '../src/services/subscription';
+import {
+  configureRevenueCat,
+  useSubscription,
+} from '../src/services/subscription';
 import { AppleDS } from '../src/theme/tokens';
 
 // pdf-lib expects Buffer in React Native
@@ -16,7 +19,11 @@ export default function RootLayout() {
   const hydrate = useSubscription((s) => s.hydrate);
 
   useEffect(() => {
-    void hydrate();
+    // RevenueCat iOS SDK — configure once on app mount, then hydrate entitlement.
+    void (async () => {
+      await configureRevenueCat();
+      await hydrate();
+    })();
   }, [hydrate]);
 
   return (

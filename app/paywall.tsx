@@ -59,17 +59,36 @@ export default function PaywallScreen() {
 
   const onPrimaryPurchase = async () => {
     await Haptic.medium();
-    await purchaseIntroductoryOffer();
+    const ok = await purchaseIntroductoryOffer();
+    if (!ok) {
+      await Haptic.warning();
+      return;
+    }
     await Haptic.success();
     finishAndReturn();
   };
 
   const onExtendedPurchase = async () => {
     await Haptic.medium();
-    await purchaseExtendedTrial();
+    const ok = await purchaseExtendedTrial();
+    if (!ok) {
+      await Haptic.warning();
+      return;
+    }
     await Haptic.success();
     setShowDownsell(false);
     finishAndReturn();
+  };
+
+  const onRestore = async () => {
+    await Haptic.selection();
+    const ok = await restorePurchases();
+    if (ok) {
+      await Haptic.success();
+      finishAndReturn();
+      return;
+    }
+    await Haptic.warning();
   };
 
   const onClosePress = async () => {
@@ -147,7 +166,7 @@ export default function PaywallScreen() {
           />
 
           <View style={styles.links}>
-            <Pressable onPress={() => void restorePurchases()}>
+            <Pressable onPress={() => void onRestore()}>
               <Text style={styles.link}>Restore Purchases</Text>
             </Pressable>
             <Text style={styles.linkDot}>•</Text>
