@@ -7,6 +7,12 @@ import { Haptic } from '../services/haptics';
 const PROTECTION_KEY = 'redactpdf-editor';
 
 /**
+ * TEMP (App Store screenshots): set to `true` again after marketing captures
+ * are done. When false, screenshots / recordings / app-switcher previews work.
+ */
+export const SCREEN_CAPTURE_PROTECTION_ENABLED = false;
+
+/**
  * Blocks screen capture / app-switcher previews while active, and surfaces
  * an education banner when the user attempts a screenshot.
  *
@@ -15,9 +21,17 @@ const PROTECTION_KEY = 'redactpdf-editor';
  */
 export function useScreenProtection(enabled = true) {
   const [bannerVisible, setBannerVisible] = useState(false);
+  const active = enabled && SCREEN_CAPTURE_PROTECTION_ENABLED;
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!active) {
+      // Ensure any prior lock is released while temporarily disabled.
+      void ScreenCapture.allowScreenCaptureAsync(PROTECTION_KEY);
+      if (Platform.OS === 'ios') {
+        void ScreenCapture.disableAppSwitcherProtectionAsync();
+      }
+      return;
+    }
 
     void ScreenCapture.preventScreenCaptureAsync(PROTECTION_KEY);
     if (Platform.OS === 'ios') {
@@ -30,10 +44,10 @@ export function useScreenProtection(enabled = true) {
         void ScreenCapture.disableAppSwitcherProtectionAsync();
       }
     };
-  }, [enabled]);
+  }, [active]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!active) return;
 
     const subscription = ScreenCapture.addScreenshotListener(() => {
       void Haptic.warning();
@@ -43,7 +57,7 @@ export function useScreenProtection(enabled = true) {
     return () => {
       subscription.remove();
     };
-  }, [enabled]);
+  }, [active]);
 
   const dismissBanner = useCallback(() => setBannerVisible(false), []);
 
