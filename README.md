@@ -70,6 +70,13 @@ Before production, replace `purchaseIntroductoryOffer()` with:
 
 Document processing stays on-device. No PDF bytes are uploaded by the app.
 
+In-app legal documents (Last Updated: September 2026):
+
+- Privacy Policy — `/privacy`
+- Terms of Use (EULA) — `/terms`
+
+Support: princemahlaba27@gmail.com
+
 ## License
 
 Proprietary. All rights reserved.

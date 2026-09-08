@@ -1,9 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as WebBrowser from 'expo-web-browser';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
-  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -171,17 +169,19 @@ export default function PaywallScreen() {
             </Pressable>
             <Text style={styles.linkDot}>•</Text>
             <Pressable
-              onPress={() =>
-                void WebBrowser.openBrowserAsync('https://redactpdf.app/terms')
-              }
+              onPress={() => {
+                void Haptic.selection();
+                router.push('/terms' as Href);
+              }}
             >
               <Text style={styles.link}>Terms</Text>
             </Pressable>
             <Text style={styles.linkDot}>•</Text>
             <Pressable
-              onPress={() =>
-                void Linking.openURL('https://redactpdf.app/privacy')
-              }
+              onPress={() => {
+                void Haptic.selection();
+                router.push('/privacy' as Href);
+              }}
             >
               <Text style={styles.link}>Privacy</Text>
             </Pressable>

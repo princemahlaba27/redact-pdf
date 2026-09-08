@@ -1,8 +1,8 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
+import { Href, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -115,14 +115,37 @@ export default function DashboardScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Ionicons
-            name="lock-closed"
-            size={14}
-            color={AppleDS.labelTertiary}
-          />
-          <Text style={styles.footerText}>
-            Your documents never leave your phone.
-          </Text>
+          <View style={styles.privacyNote}>
+            <Ionicons
+              name="lock-closed"
+              size={14}
+              color={AppleDS.labelTertiary}
+            />
+            <Text style={styles.footerText}>
+              Your documents never leave your phone.
+            </Text>
+          </View>
+          <View style={styles.legalLinks}>
+            <Pressable
+              onPress={() => {
+                void Haptic.selection();
+                router.push('/privacy' as Href);
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.legalLink}>Privacy Policy</Text>
+            </Pressable>
+            <Text style={styles.legalDot}>•</Text>
+            <Pressable
+              onPress={() => {
+                void Haptic.selection();
+                router.push('/terms' as Href);
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.legalLink}>Terms of Use</Text>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
       {busy ? (
@@ -158,16 +181,35 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   footer: {
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 10,
     paddingHorizontal: 24,
     paddingBottom: 24,
     paddingTop: 8,
   },
+  privacyNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
   footerText: {
     ...typography.footnote,
     color: AppleDS.labelTertiary,
+  },
+  legalLinks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  legalLink: {
+    ...typography.caption,
+    color: AppleDS.accent,
+  },
+  legalDot: {
+    ...typography.caption,
+    color: AppleDS.labelQuaternary,
   },
 });
