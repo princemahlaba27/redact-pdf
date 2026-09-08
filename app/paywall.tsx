@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Href, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   Modal,
@@ -171,7 +171,7 @@ export default function PaywallScreen() {
             <Pressable
               onPress={() => {
                 void Haptic.selection();
-                router.push('/terms' as Href);
+                router.push('/terms');
               }}
             >
               <Text style={styles.link}>Terms</Text>
@@ -180,7 +180,7 @@ export default function PaywallScreen() {
             <Pressable
               onPress={() => {
                 void Haptic.selection();
-                router.push('/privacy' as Href);
+                router.push('/privacy');
               }}
             >
               <Text style={styles.link}>Privacy</Text>

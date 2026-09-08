@@ -1,6 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { Href, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -129,7 +129,7 @@ export default function DashboardScreen() {
             <Pressable
               onPress={() => {
                 void Haptic.selection();
-                router.push('/privacy' as Href);
+                router.push('/privacy');
               }}
               hitSlop={8}
             >
@@ -139,7 +139,7 @@ export default function DashboardScreen() {
             <Pressable
               onPress={() => {
                 void Haptic.selection();
-                router.push('/terms' as Href);
+                router.push('/terms');
               }}
               hitSlop={8}
             >
