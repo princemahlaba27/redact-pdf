@@ -15,8 +15,9 @@
     },
     "ios": {
       "icon": "./assets/images/icon.png",
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.princemahlaba.redactpdf",
+      "buildNumber": "6",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "RedactPDF needs photo access to import scanned documents for redaction.",
         "NSCameraUsageDescription": "RedactPDF can capture document photos for redaction.",
