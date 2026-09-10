@@ -6,8 +6,8 @@ import { create } from 'zustand';
 const KEY = 'redactpdf_is_subscribed';
 /** RevenueCat entitlement that unlocks export. */
 export const PRO_ENTITLEMENT_ID = 'pro_access';
-/** iOS public SDK key (App Store). */
-export const REVENUECAT_IOS_API_KEY = 'appl_dftDRaxKMVEuYoBRaBfSmWSOhBl';
+/** iOS public SDK key (App Store — App ID appedbf4579cc). */
+export const REVENUECAT_IOS_API_KEY = 'appl_dzUcTKymUWhRbpuymodDrCenpwc';
 
 export type OfferSku = 'intro_7day' | 'extended_14day';
 
