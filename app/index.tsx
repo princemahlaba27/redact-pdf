@@ -11,6 +11,7 @@ import {
   LoadingOverlay,
   ScreenBackground,
 } from '../src/components/ui';
+import { SettingsModal } from '../src/components/SettingsModal';
 import { Haptic } from '../src/services/haptics';
 import { processImagesForRedaction } from '../src/services/imagePipeline';
 import { cachePdfUri } from '../src/services/redactionEngine';
@@ -24,6 +25,7 @@ import { AppleDS, typography } from '../src/theme/tokens';
 export default function DashboardScreen() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
 
   /** Open the editor directly — real pdf.js OCR runs there (no mock scan). */
   const openEditor = (nextUri: string, nextTitle: string) => {
@@ -89,7 +91,20 @@ export default function DashboardScreen() {
     <ScreenBackground>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
         <View style={styles.header}>
-          <Text style={typography.navBrand}>Redact PDF</Text>
+          <View style={styles.brandRow}>
+            <Text style={typography.navBrand}>Redact PDF</Text>
+            <Pressable
+              onPress={() => {
+                void Haptic.selection();
+                setSettingsVisible(true);
+              }}
+              hitSlop={12}
+              accessibilityLabel="Settings"
+              style={styles.settingsBtn}
+            >
+              <Ionicons name="settings-outline" size={22} color="#8E8E93" />
+            </Pressable>
+          </View>
           <Text style={styles.subtitle}>
             Select a document to hide private details.
           </Text>
@@ -162,6 +177,11 @@ export default function DashboardScreen() {
       {busy ? (
         <LoadingOverlay message="Reading private details on-device…" />
       ) : null}
+      <SettingsModal
+        isVisible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+        onForceOpenPaywall={() => router.push('/paywall')}
+      />
     </ScreenBackground>
   );
 }
@@ -175,6 +195,18 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingHorizontal: 24,
     paddingBottom: 8,
+  },
+  brandRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  settingsBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   subtitle: {
     ...typography.body,
