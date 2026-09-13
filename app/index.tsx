@@ -93,6 +93,17 @@ export default function DashboardScreen() {
           <Text style={styles.subtitle}>
             Select a document to hide private details.
           </Text>
+          <Pressable
+            onPress={() => {
+              void Haptic.selection();
+              router.push('/vault');
+            }}
+            style={styles.vaultLink}
+            hitSlop={8}
+          >
+            <Ionicons name="folder-open-outline" size={16} color={AppleDS.accent} />
+            <Text style={styles.vaultLinkText}>Recent Documents</Text>
+          </Pressable>
         </View>
 
         <View style={styles.centerColumn}>
@@ -170,6 +181,18 @@ const styles = StyleSheet.create({
     marginTop: 10,
     textAlign: 'center',
     paddingHorizontal: 12,
+  },
+  vaultLink: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  vaultLinkText: {
+    ...typography.footnoteMedium,
+    color: AppleDS.accent,
   },
   centerColumn: {
     flex: 1,

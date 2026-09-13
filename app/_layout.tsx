@@ -66,6 +66,12 @@ export default function RootLayout() {
             animation: 'slide_from_bottom',
           }}
         />
+        <Stack.Screen
+          name="vault"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
       </Stack>
     </GestureHandlerRootView>
   );

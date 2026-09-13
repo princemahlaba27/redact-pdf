@@ -38,6 +38,8 @@ import {
 } from '../src/models/redaction';
 import type { OcrSnapLine, TextToken, ThreatItem } from '../src/models/threat';
 import { Haptic } from '../src/services/haptics';
+import { saveToAppVault } from '../src/services/documentVault';
+import { usePendingExport } from '../src/services/pendingExport';
 import {
   burnedPagesToPdf,
   burnAndFlatten,
@@ -78,7 +80,8 @@ export default function EditorScreen() {
 
   const { bannerVisible, dismissBanner } = useScreenProtection(true);
   const isSubscribed = useSubscription((s) => s.isSubscribed);
-  const pendingExport = useRef(false);
+  const queueExport = usePendingExport((s) => s.queueExport);
+  const consumePending = usePendingExport((s) => s.consumePending);
   const viewerRef = useRef<PdfPageViewerHandle>(null);
   const visionSeededRef = useRef(false);
 
@@ -461,6 +464,10 @@ export default function EditorScreen() {
         // Fallback: opaque vector fills + metadata wipe.
         outUri = await burnAndFlatten(renderUri, redactions);
       }
+
+      // Retention vault — keep a local copy of every successful export.
+      await saveToAppVault(outUri, title || 'Document');
+
       await Haptic.success();
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(outUri, {
@@ -473,14 +480,20 @@ export default function EditorScreen() {
       await Haptic.error();
     } finally {
       setExporting(false);
-      pendingExport.current = false;
+      usePendingExport.getState().clear();
     }
   }, [renderUri, redactions, title]);
 
+  /**
+   * Post-value export gate:
+   * Subscribed → flatten + share immediately.
+   * Not subscribed → queue export, open paywall; on purchase success the
+   * editor focus effect consumes the queue and runs doExport automatically.
+   */
   const onExportPress = async () => {
     await Haptic.medium();
     if (!isSubscribed) {
-      pendingExport.current = true;
+      queueExport();
       router.push({
         pathname: '/paywall',
         params: { title: title || 'Document' },
@@ -492,10 +505,10 @@ export default function EditorScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (pendingExport.current && isSubscribed) {
+      if (consumePending() && isSubscribed) {
         void doExport();
       }
-    }, [isSubscribed, doExport]),
+    }, [isSubscribed, doExport, consumePending]),
   );
 
   const onToggleThreat = (id: string, enabled: boolean) => {
