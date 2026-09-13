@@ -1,13 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 import { create } from 'zustand';
 
 const KEY = 'redactpdf_is_subscribed';
 /** RevenueCat entitlement that unlocks export. */
-export const PRO_ENTITLEMENT_ID = 'pro_access';
+export const PRO_ENTITLEMENT_ID = 'redact_pdf_pro';
 /** iOS public SDK key (App Store — App ID appedbf4579cc). */
 export const REVENUECAT_IOS_API_KEY = 'appl_dzUcTKymUWhRbpuymodDrCenpwc';
+
+/** Apple’s system page for managing / canceling subscriptions. */
+export const APPLE_SUBSCRIPTIONS_URL =
+  'https://apps.apple.com/account/subscriptions';
 
 export type OfferSku = 'intro_7day' | 'extended_14day';
 
@@ -17,12 +21,14 @@ type SubscriptionState = {
   hydrated: boolean;
   lastOffer: OfferSku | null;
   hydrate: () => Promise<void>;
+  checkStatus: () => Promise<boolean>;
   requestExportAccess: () => Promise<boolean>;
-  /** Primary: $0.49 for 7 days → $9.99/week */
+  /** Primary: $0.99 for 7 days → $9.99/week */
   purchaseIntroductoryOffer: () => Promise<boolean>;
   /** Exit downsell: $0.00 for 14 days → $9.99/week (no price cut) */
   purchaseExtendedTrial: () => Promise<boolean>;
   restorePurchases: () => Promise<boolean>;
+  openManageSubscriptions: () => Promise<void>;
 };
 
 let purchasesConfigured = false;
@@ -85,7 +91,6 @@ function pickWeeklyPackage(offerings: Awaited<
   const current = offerings.current;
   if (!current) return null;
   if (current.weekly) return current.weekly;
-  // Fallback: first package whose product period looks weekly / $id contains week.
   const byId = current.availablePackages.find((p) =>
     /week|intro|trial|pro/i.test(p.identifier + p.product.identifier),
   );
@@ -96,7 +101,6 @@ function isUserCancelled(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const e = error as { userCancelled?: boolean; code?: number | string };
   if (e.userCancelled) return true;
-  // PurchasesErrorCode.PurchaseCancelledError === 1
   return e.code === 1 || e.code === '1' || e.code === 'PURCHASE_CANCELLED';
 }
 
@@ -108,7 +112,6 @@ async function purchaseWeekly(
   try {
     await configureRevenueCat();
     if (Platform.OS !== 'ios') {
-      // Non-iOS builds: keep local unlock so Expo web/Android QA still works.
       await persistLocalUnlock(true);
       set({ isSubscribed: true, lastOffer: offer });
       return true;
@@ -139,7 +142,7 @@ async function purchaseWeekly(
 }
 
 /**
- * Export paywall gate backed by RevenueCat (`pro_access` entitlement).
+ * Export paywall gate backed by RevenueCat (`redact_pdf_pro` entitlement).
  */
 export const useSubscription = create<SubscriptionState>((set, get) => ({
   isSubscribed: false,
@@ -151,6 +154,11 @@ export const useSubscription = create<SubscriptionState>((set, get) => ({
     await configureRevenueCat();
     await refreshEntitlement(set);
     set({ hydrated: true });
+  },
+
+  checkStatus: async () => {
+    await configureRevenueCat();
+    return refreshEntitlement(set);
   },
 
   requestExportAccess: async () => {
@@ -182,6 +190,12 @@ export const useSubscription = create<SubscriptionState>((set, get) => ({
       return false;
     } finally {
       set({ isLoading: false });
+    }
+  },
+
+  openManageSubscriptions: async () => {
+    if (Platform.OS === 'ios') {
+      await Linking.openURL(APPLE_SUBSCRIPTIONS_URL);
     }
   },
 }));

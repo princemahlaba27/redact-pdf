@@ -102,7 +102,7 @@ export const TERMS_OF_USE: LegalDocument = {
       blocks: [
         {
           type: 'bullet',
-          text: 'Billing: Certain features (such as flattened document export) require an active auto-renewable subscription. Subscriptions begin with an introductory promotional rate ($0.49 for 7 days) and automatically renew at the standard weekly rate ($9.99/week) unless canceled at least 24 hours before the end of the billing period.',
+          text: 'Billing: Certain features (such as flattened document export) require an active auto-renewable subscription. Subscriptions begin with an introductory promotional rate ($0.99 for 7 days) and automatically renew at the standard weekly rate ($9.99/week) unless canceled at least 24 hours before the end of the billing period.',
         },
         {
           type: 'bullet',

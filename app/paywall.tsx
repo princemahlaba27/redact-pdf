@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -42,14 +43,24 @@ export default function PaywallScreen() {
   const displayDoc = `${documentName}.pdf`;
 
   const {
+    isSubscribed,
     isLoading,
+    checkStatus,
     purchaseIntroductoryOffer,
     purchaseExtendedTrial,
     restorePurchases,
+    openManageSubscriptions,
   } = useSubscription();
 
   const [showDownsell, setShowDownsell] = useState(false);
   const [downsellOffered, setDownsellOffered] = useState(false);
+
+  // Re-check redact_pdf_pro entitlement whenever the paywall is shown.
+  useFocusEffect(
+    useCallback(() => {
+      void checkStatus();
+    }, [checkStatus]),
+  );
 
   const finishAndReturn = useCallback(() => {
     router.back();
@@ -63,6 +74,8 @@ export default function PaywallScreen() {
       return;
     }
     await Haptic.success();
+    Alert.alert('Success', 'Your Pro Access is active!');
+    // Dismiss paywall so the editor can fire the pending export.
     finishAndReturn();
   };
 
@@ -89,8 +102,24 @@ export default function PaywallScreen() {
     await Haptic.warning();
   };
 
+  const onManageSubscription = async () => {
+    await Haptic.selection();
+    await openManageSubscriptions();
+  };
+
+  const onExportNow = async () => {
+    await Haptic.success();
+    // Already subscribed — close paywall so editor resumes pending export.
+    finishAndReturn();
+  };
+
   const onClosePress = async () => {
     await Haptic.selection();
+    // Subscribed users skip the downsell — just leave.
+    if (isSubscribed) {
+      finishAndReturn();
+      return;
+    }
     if (!downsellOffered) {
       setDownsellOffered(true);
       setShowDownsell(true);
@@ -149,25 +178,60 @@ export default function PaywallScreen() {
             ))}
           </View>
 
-          <View style={styles.offerCard}>
-            <Text style={styles.offerTitle}>7 Days Full Access for $0.49</Text>
-            <Text style={styles.offerPrice}>
-              Renews at $9.99/week. Cancel anytime in Apple Settings.
-            </Text>
-          </View>
+          {isSubscribed ? (
+            <>
+              <View style={styles.offerCard}>
+                <Text style={styles.offerTitle}>Pro Access Active</Text>
+                <Text style={styles.offerPrice}>
+                  Your subscription unlocks unlimited blackout exports.
+                </Text>
+              </View>
 
-          <PrimaryButton
-            title="Black Out & Save Document"
-            onPress={() => void onPrimaryPurchase()}
-            loading={isLoading && !showDownsell}
-            style={styles.cta}
-          />
+              <PrimaryButton
+                title="Export Document"
+                onPress={() => void onExportNow()}
+                style={styles.cta}
+              />
+              <PrimaryButton
+                title="Manage Subscription"
+                onPress={() => void onManageSubscription()}
+                style={styles.secondaryCta}
+              />
+            </>
+          ) : (
+            <>
+              <View style={styles.offerCard}>
+                <Text style={styles.offerTitle}>
+                  7 Days Full Access for $0.99
+                </Text>
+                <Text style={styles.offerPrice}>
+                  Renews at $9.99/week. Cancel anytime in Apple Settings.
+                </Text>
+              </View>
+
+              <PrimaryButton
+                title={
+                  isLoading && !showDownsell
+                    ? 'Processing…'
+                    : 'Start 7-Day Access ($0.99)'
+                }
+                onPress={() => void onPrimaryPurchase()}
+                loading={isLoading && !showDownsell}
+                disabled={isLoading && !showDownsell}
+                style={styles.cta}
+              />
+            </>
+          )}
 
           <View style={styles.links}>
-            <Pressable onPress={() => void onRestore()}>
-              <Text style={styles.link}>Restore Purchases</Text>
-            </Pressable>
-            <Text style={styles.linkDot}>•</Text>
+            {!isSubscribed ? (
+              <>
+                <Pressable onPress={() => void onRestore()}>
+                  <Text style={styles.link}>Restore Purchases</Text>
+                </Pressable>
+                <Text style={styles.linkDot}>•</Text>
+              </>
+            ) : null}
             <Pressable
               onPress={() => {
                 void Haptic.selection();
@@ -190,7 +254,7 @@ export default function PaywallScreen() {
       </SafeAreaView>
 
       <Modal
-        visible={showDownsell}
+        visible={showDownsell && !isSubscribed}
         animationType="slide"
         transparent
         onRequestClose={() => void dismissDownsellHard()}
@@ -338,11 +402,11 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   cta: { marginTop: 22 },
+  secondaryCta: { marginTop: 12 },
   downsellCta: {
     marginTop: 16,
     marginHorizontal: 16,
     alignSelf: 'stretch',
-    // Comfortable tap target for the 14-day trial CTA.
     minHeight: 52,
     paddingVertical: 4,
   },
