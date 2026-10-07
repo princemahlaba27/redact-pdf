@@ -26,5 +26,13 @@ class VisionOcrModule : Module() {
       // Fail closed: no mock boxes. Wire ML Kit here for Android OCR.
       emptyList<Map<String, Any>>()
     }
+
+    AsyncFunction("recognizeDocument") { uriString: String ->
+      mapOf("pages" to emptyList<Map<String, Any>>())
+    }
+
+    AsyncFunction("flattenPdf") { uriString: String, rects: List<Map<String, Any>> ->
+      throw Exception("On-device flatten is available on iOS.")
+    }
   }
 }

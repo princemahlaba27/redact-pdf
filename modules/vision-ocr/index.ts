@@ -12,8 +12,30 @@ export type VisionRawBox = {
   visionOrigin: boolean;
 };
 
+export type VisionEntityBox = VisionRawBox & {
+  category: string;
+  badge: string;
+};
+
+export type VisionDocumentPage = {
+  pageIndex: number;
+  tokens: VisionRawBox[];
+  entities: VisionEntityBox[];
+};
+
 type VisionOcrNative = NativeModule & {
   recognizeText(uri: string): Promise<VisionRawBox[]>;
+  recognizeDocument(uri: string): Promise<{ pages: VisionDocumentPage[] }>;
+  flattenPdf(
+    uri: string,
+    rects: Array<{
+      pageIndex: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>,
+  ): Promise<string>;
   isAvailable(): boolean;
 };
 
@@ -54,4 +76,30 @@ export async function recognizeTextNative(uri: string): Promise<VisionRawBox[]> 
   }
   const results = await mod.recognizeText(uri);
   return Array.isArray(results) ? results : [];
+}
+
+/** OCR a PDF or image entirely on-device. Empty when the native module is absent. */
+export async function recognizeDocumentNative(uri: string): Promise<VisionDocumentPage[]> {
+  const mod = getNative();
+  if (!mod?.recognizeDocument) return [];
+  const result = await mod.recognizeDocument(uri);
+  return Array.isArray(result?.pages) ? result.pages : [];
+}
+
+/** Destructive raster flatten. Rejects when the native module cannot write a PDF. */
+export async function flattenPdfNative(
+  uri: string,
+  rects: Array<{
+    pageIndex: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>,
+): Promise<string> {
+  const mod = getNative();
+  if (!mod?.flattenPdf) {
+    throw new Error('On-device flatten is not available.');
+  }
+  return mod.flattenPdf(uri, rects);
 }

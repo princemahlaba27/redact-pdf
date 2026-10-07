@@ -13,10 +13,8 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  PdfPageViewer,
-  type PdfPageViewerHandle,
-} from '../src/components/PdfPageViewer';
+import { PdfPageViewer, type PdfPageViewerHandle } from '../src/components/PdfPageViewer';
+import { CategoryFilterBar } from '../src/components/CategoryFilterBar';
 import { SecurityShieldBanner } from '../src/components/SecurityShieldBanner';
 import { ThreatAuditDrawer } from '../src/components/ThreatAuditDrawer';
 import {
@@ -37,6 +35,7 @@ import {
   REDACTION_STYLE_LABEL,
 } from '../src/models/redaction';
 import type { OcrSnapLine, TextToken, ThreatItem } from '../src/models/threat';
+import { threatInFilter, type RedactionFilterId } from '../src/models/threat';
 import { Haptic } from '../src/services/haptics';
 import { saveToAppVault } from '../src/services/documentVault';
 import { usePendingExport } from '../src/services/pendingExport';
@@ -48,6 +47,11 @@ import {
   uuidv4,
 } from '../src/services/redactionEngine';
 import { useSubscription } from '../src/services/subscription';
+import {
+  flattenDocumentOnDevice,
+  mergeThreats,
+  scanDocumentOnDevice,
+} from '../src/services/universalRedaction';
 import { useOcrSession } from '../src/services/ocrSession';
 import {
   classifyTextTokens,
@@ -148,6 +152,23 @@ export default function EditorScreen() {
         if (cancelled) return;
         setRenderUri(cached);
         setPageCount(await getPdfPageCount(cached));
+        setDetecting(true);
+        try {
+          const scan = await scanDocumentOnDevice(cached);
+          if (!cancelled && (scan.tokens.length > 0 || scan.threats.length > 0)) {
+            visionSeededRef.current = true;
+            setThreats((prev) => mergeThreats(prev, scan.threats));
+            setSnapLines(scan.lines);
+            if (scan.threats.length) {
+              setAuditOpen(true);
+              void Haptic.success();
+            }
+          }
+        } catch (error) {
+          console.warn('[universalRedaction] scan failed:', error);
+        } finally {
+          if (!cancelled) setDetecting(false);
+        }
       } catch {
         if (!cancelled) {
           setRenderUri(uri);
@@ -160,7 +181,7 @@ export default function EditorScreen() {
     return () => {
       cancelled = true;
     };
-  }, [uri]);
+  }, [uri, setSnapLines]);
 
   const threatRedactions = useMemo(
     () => threatsToRedactions(threats, style),
@@ -413,7 +434,6 @@ export default function EditorScreen() {
   const pan = useMemo(
     () =>
       Gesture.Pan()
-        .enabled(mode === 'manual')
         .onBegin((e) => {
           'worklet';
           runOnJS(syncSnapStroke)(e.x, e.y, true);
@@ -426,8 +446,60 @@ export default function EditorScreen() {
           'worklet';
           runOnJS(commitDraft)();
         }),
-    [mode, syncSnapStroke, commitDraft],
+    [syncSnapStroke, commitDraft],
   );
+
+  const dismissHit = useCallback(
+    (x: number, y: number) => {
+      const nx = (x - pageFit.offsetX) / Math.max(pageFit.renderWidth, 1);
+      const ny = (y - pageFit.offsetY) / Math.max(pageFit.renderHeight, 1);
+      const hit = [...pageRedactions]
+        .reverse()
+        .find(
+          (redaction) =>
+            nx >= redaction.rect.x &&
+            nx <= redaction.rect.x + redaction.rect.width &&
+            ny >= redaction.rect.y &&
+            ny <= redaction.rect.y + redaction.rect.height,
+        );
+      if (!hit) return;
+      if (hit.source === 'manual') {
+        setManualRedactions((prev) => prev.filter((item) => item.id !== hit.id));
+      } else {
+        setThreats((prev) =>
+          prev.map((item) => (item.id === hit.id ? { ...item, enabled: false } : item)),
+        );
+      }
+      void Haptic.selection();
+    },
+    [pageFit, pageRedactions],
+  );
+
+  const tap = useMemo(
+    () =>
+      Gesture.Tap().onEnd((e) => {
+        'worklet';
+        runOnJS(dismissHit)(e.x, e.y);
+      }),
+    [dismissHit],
+  );
+
+  const drawGesture = useMemo(() => Gesture.Exclusive(tap, pan), [tap, pan]);
+
+  const onToggleFilter = useCallback((filter: RedactionFilterId) => {
+    void Haptic.selection();
+    setThreats((prev) => {
+      if (filter === 'all') {
+        const enable = prev.some((item) => !item.enabled);
+        return prev.map((item) => ({ ...item, enabled: enable }));
+      }
+      const matching = prev.filter((item) => threatInFilter(item, filter));
+      const enable = matching.some((item) => !item.enabled);
+      return prev.map((item) =>
+        threatInFilter(item, filter) ? { ...item, enabled: enable } : item,
+      );
+    });
+  }, []);
 
   const onModeChange = async (next: RedactionMode) => {
     setMode(next);
@@ -451,18 +523,20 @@ export default function EditorScreen() {
     try {
       let outUri: string;
       try {
-        // Prefer true pixel burn: rasterize each page with blackouts baked in.
-        const rasters = await viewerRef.current!.burnPages(redactions);
-        outUri = await burnedPagesToPdf(
-          rasters.map((p) => ({
-            base64: p.base64,
-            width: p.width,
-            height: p.height,
-          })),
-        );
+        outUri = await flattenDocumentOnDevice(renderUri, redactions);
       } catch {
-        // Fallback: opaque vector fills + metadata wipe.
-        outUri = await burnAndFlatten(renderUri, redactions);
+        try {
+          const rasters = await viewerRef.current!.burnPages(redactions);
+          outUri = await burnedPagesToPdf(
+            rasters.map((p) => ({
+              base64: p.base64,
+              width: p.width,
+              height: p.height,
+            })),
+          );
+        } catch {
+          outUri = await burnAndFlatten(renderUri, redactions);
+        }
       }
 
       // Retention vault — keep a local copy of every successful export.
@@ -590,6 +664,8 @@ export default function EditorScreen() {
           <Ionicons name="chevron-up" size={16} color={AppleDS.success} />
         </Pressable>
 
+        <CategoryFilterBar threats={threats} onToggle={onToggleFilter} />
+
         <View style={styles.canvas} onLayout={onCanvasLayout}>
           <PdfPageViewer
             ref={viewerRef}
@@ -600,7 +676,7 @@ export default function EditorScreen() {
               setPageNatural({ width: fit.pageWidth, height: fit.pageHeight })
             }
           />
-          <GestureDetector gesture={pan}>
+          <GestureDetector gesture={drawGesture}>
             <View style={StyleSheet.absoluteFill} pointerEvents="box-only">
               {pageRedactions.map((r) => (
                 <View

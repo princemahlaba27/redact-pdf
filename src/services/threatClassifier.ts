@@ -39,6 +39,20 @@ export const IDENTITY_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
 export const ADDRESS_RE =
   /\b\d{1,5}\s+[A-Za-z0-9\s.,#-]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Box)\b/gi;
 
+/** 9-digit ABA routing numbers (checksum applied by the caller). */
+export const ROUTING_RE = /\b\d{9}\b/g;
+
+/** Tax / national ID labels with an alphanumeric value. */
+export const TAX_ID_RE =
+  /\b(?:ssn|sin|tin|vat|tax\s*id|national\s*id|id\s*(?:no|number))\b[:\s#-]*([A-Z0-9][A-Z0-9-]{7,14})/gi;
+
+/** Passport labels. */
+export const PASSPORT_RE = /\bpassport\b[:\s#-]*([A-Z0-9]{6,13})/gi;
+
+/** Document classification banners. */
+export const CLASSIFICATION_RE =
+  /\b(?:confidential|privileged|do not disclose|proprietary)\b/gi;
+
 /** Invoice / receipt anchor labels. */
 export const INVOICE_ANCHOR_RE =
   /(?:total|balance due|amount due|subtotal|billed to|invoice to|recipient|vat|tax|payment due|price)\b/gi;
@@ -67,6 +81,17 @@ function luhnOk(digits: string): boolean {
     sum += d;
   }
   return sum % 10 === 0;
+}
+
+/** ABA routing checksum. Rejects 000000000. */
+export function abaOk(digits: string): boolean {
+  if (!/^\d{9}$/.test(digits)) return false;
+  const d = digits.split('').map((c) => parseInt(c, 10));
+  const sum =
+    3 * (d[0] + d[3] + d[6]) +
+    7 * (d[1] + d[4] + d[7]) +
+    (d[2] + d[5] + d[8]);
+  return sum !== 0 && sum % 10 === 0;
 }
 
 function clampRect(r: NormalizedRect): NormalizedRect {
@@ -569,13 +594,46 @@ export function classifyTextTokens(tokens: TextToken[]): ThreatItem[] {
     matchCategory('contact', EMAIL_RE, token, out, () => 'Email');
 
     matchCategory(
-      'invoice',
+      'contact',
       ADDRESS_RE,
       token,
       out,
       () => 'Address',
       undefined,
       (m) => `Address: ${m.trim()}`,
+    );
+
+    matchCategory(
+      'banking',
+      ROUTING_RE,
+      token,
+      out,
+      () => 'Routing Number',
+      (m) => abaOk(m),
+    );
+
+    matchCategory(
+      'identity',
+      TAX_ID_RE,
+      token,
+      out,
+      () => 'Tax ID',
+    );
+
+    matchCategory(
+      'identity',
+      PASSPORT_RE,
+      token,
+      out,
+      () => 'Passport',
+    );
+
+    matchCategory(
+      'marker',
+      CLASSIFICATION_RE,
+      token,
+      out,
+      () => 'Classification',
     );
 
     matchCategory(

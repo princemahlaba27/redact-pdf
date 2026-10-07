@@ -16,7 +16,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'Vision', 'UIKit', 'ImageIO'
+  s.frameworks = 'Vision', 'UIKit', 'ImageIO', 'PDFKit', 'NaturalLanguage'
 
   s.source_files = 'VisionOcrModule.swift'
 end
