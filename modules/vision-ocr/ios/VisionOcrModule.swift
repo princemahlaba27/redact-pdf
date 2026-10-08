@@ -218,7 +218,13 @@ public class VisionOcrModule: Module {
       let text = ns.substring(with: match.range)
       switch match.resultType {
       case .phoneNumber:
-        emit(text, "contacts", "Phone Number", range)
+        let lower = full.lowercased()
+        let labeledId = lower.contains("vat") || lower.contains("tax id") || lower.contains("tax:")
+        let compact = text.filter { $0.isNumber || $0 == "-" }
+        let vatShape = compact.range(of: #"^\d{5,}-\d{3,}$"#, options: .regularExpression) != nil
+        if !(labeledId && vatShape) {
+          emit(text, "contacts", "Phone Number", range)
+        }
       case .address:
         emit(text, "contacts", "Address", range)
       case .link:
@@ -246,10 +252,27 @@ public class VisionOcrModule: Module {
     ) { tag, range in
       guard let tag = tag else { return true }
       let text = String(full[range])
+      let stop: Set<String> = [
+        "total", "balance", "invoice", "statement", "amount", "paid", "tax", "vat",
+        "subtotal", "page", "date", "receipt", "debit", "credit", "description",
+        "transfer", "reference", "account", "number", "phone", "email", "address",
+        "payment", "due", "from", "item", "items",
+      ]
+      let words = text.split(whereSeparator: { $0.isWhitespace }).map { token -> String in
+        String(token).lowercased().filter { $0.isLetter }
+      }.filter { $0.count > 1 && !stop.contains($0) }
       if tag == .personalName {
-        emit(text, "personal", "Name", range)
+        if words.count >= 2 && text.count <= 48 {
+          emit(text, "personal", "Name", range)
+        }
       } else if tag == .organizationName {
-        emit(text, "personal", "Organization", range)
+        let lower = text.lowercased()
+        let suffix = lower.contains("ltd") || lower.contains("inc") || lower.contains("pty")
+          || lower.contains("llc") || lower.contains("gmbh") || lower.contains("corp")
+          || lower.contains("limited") || lower.contains("bank")
+        if text.count <= 48 && (suffix || words.count >= 2) {
+          emit(text, "personal", "Organization", range)
+        }
       }
       return true
     }
@@ -270,12 +293,12 @@ public class VisionOcrModule: Module {
       emit(ns.substring(with: nsRange), category, badge, range)
     }
 
-    for result in matches(#"[\$€£]\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?|\bR\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?\b"#) {
-      emitMatch(result, "financial", "Total / Balance")
-    }
-    let lower = full.lowercased()
-    if lower.range(of: #"total|balance due|amount due|subtotal|balance|vat|tax"#, options: .regularExpression) != nil {
-      for result in matches(#"\b\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})\b"#) {
+    // Every currency or cents amount, including statement columns that
+    // do not repeat the word "balance" on the row.
+    for result in matches(#"(?:[\$€£]\s?|\bR\s?)-?\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?|\(\d{1,3}(?:[,\s]\d{3})*\.\d{2}\)|\b-?\d{1,3}(?:[,\s]\d{3})*\.\d{2}\b"#) {
+      let raw = ns.substring(with: result.range)
+      let digits = raw.filter(\.isNumber)
+      if digits.count >= 3 {
         emitMatch(result, "financial", "Total / Balance")
       }
     }
@@ -299,14 +322,24 @@ public class VisionOcrModule: Module {
       }
     }
 
+    for result in matches(#"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"#, [.caseInsensitive]) {
+      emitMatch(result, "contacts", "Email")
+    }
+
     for result in matches(#"\b\d{3}-\d{2}-\d{4}\b"#) {
       emitMatch(result, "tax", "ID Number")
     }
-    for result in matches(#"(?i)\b(?:ssn|sin|tin|vat|tax\s*id|national\s*id|id\s*(?:no|number))\b[:\s#-]*([A-Z0-9][A-Z0-9-]{7,14})"#) {
+    for result in matches(#"(?i)\b(?:ssn|sin|tin|vat|tax(?:\s*id)?|national\s*id|id\s*(?:no|number))\b(?:\s*[:.]?\s*(?:no|number|nr|id))?\s*[:.#-]?\s*([A-Z0-9][A-Z0-9\-/]{5,20})"#) {
       emitMatch(result, "tax", "Tax ID", group: 1)
     }
     for result in matches(#"(?i)\bpassport\b[:\s#-]*([A-Z0-9]{6,13})"#) {
       emitMatch(result, "tax", "Passport", group: 1)
+    }
+    for result in matches(#"\b(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9]{3,}(?:-[A-Za-z0-9]{3,})+\b"#) {
+      let raw = ns.substring(with: result.range)
+      if raw.filter({ $0.isNumber || $0.isLetter }).count >= 12 {
+        emitMatch(result, "tax", "ID Number")
+      }
     }
 
     for phrase in ["Confidential", "Privileged", "Do Not Disclose", "Proprietary"] {

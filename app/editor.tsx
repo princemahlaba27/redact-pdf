@@ -10,18 +10,19 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PdfPageViewer, type PdfPageViewerHandle } from '../src/components/PdfPageViewer';
 import { CategoryFilterBar } from '../src/components/CategoryFilterBar';
 import { SecurityShieldBanner } from '../src/components/SecurityShieldBanner';
 import { ThreatAuditDrawer } from '../src/components/ThreatAuditDrawer';
-import {
-  FloatingToolbar,
-  LoadingOverlay,
-  ScreenBackground,
-} from '../src/components/ui';
+import { LoadingOverlay, ScreenBackground } from '../src/components/ui';
 import { useScreenProtection } from '../src/hooks/useScreenProtection';
 import type {
   NormalizedRect,
@@ -69,6 +70,35 @@ import {
 /** Vertical snap radius (pt) for the text-snap highlighter brush. */
 const SNAP_RADIUS_PT = 16;
 
+function contentPoint(
+  x: number,
+  y: number,
+  scale: number,
+  tx: number,
+  ty: number,
+  width: number,
+  height: number,
+) {
+  'worklet';
+  const cx = width / 2;
+  const cy = height / 2;
+  return {
+    x: (x - tx - cx) / scale + cx,
+    y: (y - ty - cy) / scale + cy,
+  };
+}
+
+function clampPan(scale: number, tx: number, ty: number, width: number, height: number) {
+  'worklet';
+  if (scale <= 1) return { x: 0, y: 0 };
+  const maxX = (width * (scale - 1)) / 2;
+  const maxY = (height * (scale - 1)) / 2;
+  return {
+    x: Math.min(maxX, Math.max(-maxX, tx)),
+    y: Math.min(maxY, Math.max(-maxY, ty)),
+  };
+}
+
 function statusCopy(total: number, selected: number): string {
   if (total <= 0) {
     return '0 Items Hidden · Document Details Erased on export';
@@ -82,6 +112,7 @@ export default function EditorScreen() {
   const uri = Array.isArray(params.uri) ? params.uri[0] : params.uri;
   const title = Array.isArray(params.title) ? params.title[0] : params.title;
 
+  const insets = useSafeAreaInsets();
   const { bannerVisible, dismissBanner } = useScreenProtection(true);
   const isSubscribed = useSubscription((s) => s.isSubscribed);
   const queueExport = usePendingExport((s) => s.queueExport);
@@ -97,12 +128,23 @@ export default function EditorScreen() {
   const [manualRedactions, setManualRedactions] = useState<RedactionRect[]>([]);
   const [threats, setThreats] = useState<ThreatItem[]>([]);
   const [auditOpen, setAuditOpen] = useState(false);
-  const [focusPulseId, setFocusPulseId] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [loadingDoc, setLoadingDoc] = useState(true);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [pageNatural, setPageNatural] = useState({ width: 1, height: 1 });
+  const [reportedFit, setReportedFit] = useState<PageFit | null>(null);
+  const zoomScale = useSharedValue(1);
+  const zoomX = useSharedValue(0);
+  const zoomY = useSharedValue(0);
+  const zoomSavedScale = useSharedValue(1);
+  const zoomSavedX = useSharedValue(0);
+  const zoomSavedY = useSharedValue(0);
+  const canvasW = useSharedValue(1);
+  const canvasH = useSharedValue(1);
+  const touchStartX = useSharedValue(0);
+  const touchStartY = useSharedValue(0);
+  const drawArmedAt = useSharedValue(0);
   const [draft, setDraft] = useState<NormalizedRect | null>(null);
   const draftRef = useRef<NormalizedRect | null>(null);
   const ocrLinesRef = useRef<OcrSnapLine[]>([]);
@@ -152,6 +194,7 @@ export default function EditorScreen() {
         if (cancelled) return;
         setRenderUri(cached);
         setPageCount(await getPdfPageCount(cached));
+        setReportedFit(null);
         setDetecting(true);
         try {
           const scan = await scanDocumentOnDevice(cached);
@@ -200,62 +243,44 @@ export default function EditorScreen() {
 
   const selectedCount = threats.filter((t) => t.enabled).length;
 
-  /** Aspect-fit page frame inside the canvas — keeps blackouts glued to glyphs. */
-  const pageFit: PageFit = useMemo(
-    () =>
-      computeAspectFit(
-        pageNatural.width,
-        pageNatural.height,
-        canvasSize.width,
-        canvasSize.height,
-      ),
-    [pageNatural.width, pageNatural.height, canvasSize.width, canvasSize.height],
-  );
-
-  const toScreen = useCallback(
-    (rect: NormalizedRect) => mapPageRectToScreen(rect, pageFit),
-    [pageFit],
-  );
+  /** Page frame reported by the viewer, scaled into the RN canvas. */
+  const pageFit: PageFit = useMemo(() => {
+    if (
+      reportedFit &&
+      reportedFit.containerWidth > 1 &&
+      reportedFit.renderWidth > 1 &&
+      canvasSize.width > 1
+    ) {
+      const sx = canvasSize.width / reportedFit.containerWidth;
+      const sy = canvasSize.height / reportedFit.containerHeight;
+      return {
+        ...reportedFit,
+        offsetX: reportedFit.offsetX * sx,
+        offsetY: reportedFit.offsetY * sy,
+        renderWidth: reportedFit.renderWidth * sx,
+        renderHeight: reportedFit.renderHeight * sy,
+        containerWidth: canvasSize.width,
+        containerHeight: canvasSize.height,
+      };
+    }
+    return computeAspectFit(
+      pageNatural.width,
+      pageNatural.height,
+      canvasSize.width,
+      canvasSize.height,
+    );
+  }, [reportedFit, pageNatural.width, pageNatural.height, canvasSize.width, canvasSize.height]);
 
   const onTokensExtracted = useCallback(
     (tokens: TextToken[], pages: number) => {
       if (pages > 0) setPageCount(pages);
       const nextLines = tokensToSnapLines(tokens);
       // Image-origin docs already have Vision tokens — don't replace with empty PDF text layer.
-      if (visionSeededRef.current && tokens.length === 0) return;
-      if (visionSeededRef.current && tokens.length > 0) {
-        // Merge rare embedded text with Vision hits; append snap lines.
-        setDetecting(true);
-        try {
-          setThreats((prev) => {
-            const extra = classifyTextTokens(tokens);
-            const keys = new Set(
-              prev.map(
-                (t) =>
-                  `${t.pageIndex}|${t.badge}|${t.text.toLowerCase()}|${t.rect.x.toFixed(3)}|${t.rect.y.toFixed(3)}`,
-              ),
-            );
-            const merged = [...prev];
-            for (const item of extra) {
-              const key = `${item.pageIndex}|${item.badge}|${item.text.toLowerCase()}|${item.rect.x.toFixed(3)}|${item.rect.y.toFixed(3)}`;
-              if (!keys.has(key)) merged.push(item);
-            }
-            return merged;
-          });
-          setSnapLines([
-            ...ocrLinesRef.current,
-            ...nextLines.filter(
-              (l) =>
-                !ocrLinesRef.current.some(
-                  (e) =>
-                    e.pageIndex === l.pageIndex &&
-                    Math.abs(e.rect.y - l.rect.y) < 0.01 &&
-                    Math.abs(e.rect.x - l.rect.x) < 0.01,
-                ),
-            ),
-          ]);
-        } finally {
-          setDetecting(false);
+      if (visionSeededRef.current) {
+        // Vision word boxes are already precise. pdf.js line unions are wide
+        // and would paint blackouts across the wrong columns.
+        if (ocrLinesRef.current.length === 0 && nextLines.length > 0) {
+          setSnapLines(nextLines);
         }
         return;
       }
@@ -278,6 +303,8 @@ export default function EditorScreen() {
   const onCanvasLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     setCanvasSize({ width, height });
+    canvasW.value = width;
+    canvasH.value = height;
   };
 
   const addManualRedaction = useCallback(
@@ -311,6 +338,12 @@ export default function EditorScreen() {
     snapStrokeRef.current = { startX: 0, line: null, snapped: false };
     if (current) addManualRedaction(current);
   }, [addManualRedaction]);
+
+  const cancelDraft = useCallback(() => {
+    draftRef.current = null;
+    setDraft(null);
+    snapStrokeRef.current = { startX: 0, line: null, snapped: false };
+  }, []);
 
   /**
    * Find nearest OCR line within 16pt vertical radius of the touch.
@@ -434,19 +467,74 @@ export default function EditorScreen() {
   const pan = useMemo(
     () =>
       Gesture.Pan()
+        .maxPointers(1)
+        .manualActivation(true)
+        .onTouchesDown((e) => {
+          'worklet';
+          const t = e.allTouches[0];
+          if (!t) return;
+          touchStartX.value = t.x;
+          touchStartY.value = t.y;
+          drawArmedAt.value = Date.now();
+        })
+        .onTouchesMove((e, manager) => {
+          'worklet';
+          if (e.numberOfTouches > 1) {
+            manager.fail();
+            return;
+          }
+          const t = e.allTouches[0];
+          if (!t) return;
+          const dist = Math.hypot(t.x - touchStartX.value, t.y - touchStartY.value);
+          if (dist > 12 && Date.now() - drawArmedAt.value > 50) manager.activate();
+        })
         .onBegin((e) => {
           'worklet';
-          runOnJS(syncSnapStroke)(e.x, e.y, true);
+          const p = contentPoint(
+            e.x,
+            e.y,
+            zoomScale.value,
+            zoomX.value,
+            zoomY.value,
+            canvasW.value,
+            canvasH.value,
+          );
+          runOnJS(syncSnapStroke)(p.x, p.y, true);
         })
         .onUpdate((e) => {
           'worklet';
-          runOnJS(syncSnapStroke)(e.x, e.y, false);
+          const p = contentPoint(
+            e.x,
+            e.y,
+            zoomScale.value,
+            zoomX.value,
+            zoomY.value,
+            canvasW.value,
+            canvasH.value,
+          );
+          runOnJS(syncSnapStroke)(p.x, p.y, false);
         })
         .onEnd(() => {
           'worklet';
           runOnJS(commitDraft)();
+        })
+        .onFinalize((_e, success) => {
+          'worklet';
+          if (!success) runOnJS(cancelDraft)();
         }),
-    [syncSnapStroke, commitDraft],
+    [
+      syncSnapStroke,
+      commitDraft,
+      cancelDraft,
+      zoomScale,
+      zoomX,
+      zoomY,
+      canvasW,
+      canvasH,
+      touchStartX,
+      touchStartY,
+      drawArmedAt,
+    ],
   );
 
   const dismissHit = useCallback(
@@ -477,14 +565,133 @@ export default function EditorScreen() {
 
   const tap = useMemo(
     () =>
-      Gesture.Tap().onEnd((e) => {
-        'worklet';
-        runOnJS(dismissHit)(e.x, e.y);
-      }),
-    [dismissHit],
+      Gesture.Tap()
+        .maxDuration(280)
+        .maxDistance(14)
+        .onEnd((e) => {
+          'worklet';
+          const p = contentPoint(
+            e.x,
+            e.y,
+            zoomScale.value,
+            zoomX.value,
+            zoomY.value,
+            canvasW.value,
+            canvasH.value,
+          );
+          runOnJS(dismissHit)(p.x, p.y);
+        }),
+    [dismissHit, zoomScale, zoomX, zoomY, canvasW, canvasH],
   );
 
-  const drawGesture = useMemo(() => Gesture.Exclusive(tap, pan), [tap, pan]);
+  const pinch = useMemo(
+    () =>
+      Gesture.Pinch()
+        .onStart(() => {
+          'worklet';
+          zoomSavedScale.value = zoomScale.value;
+          zoomSavedX.value = zoomX.value;
+          zoomSavedY.value = zoomY.value;
+        })
+        .onUpdate((e) => {
+          'worklet';
+          const start = Math.max(zoomSavedScale.value, 1);
+          const next = Math.min(6, Math.max(1, start * e.scale));
+          const ratio = next / start;
+          const cx = canvasW.value / 2;
+          const cy = canvasH.value / 2;
+          const tx = (1 - ratio) * (e.focalX - cx) + ratio * zoomSavedX.value;
+          const ty = (1 - ratio) * (e.focalY - cy) + ratio * zoomSavedY.value;
+          const clamped = clampPan(next, tx, ty, canvasW.value, canvasH.value);
+          zoomScale.value = next;
+          zoomX.value = clamped.x;
+          zoomY.value = clamped.y;
+        })
+        .onEnd(() => {
+          'worklet';
+          if (zoomScale.value <= 1.05) {
+            zoomScale.value = withTiming(1);
+            zoomX.value = withTiming(0);
+            zoomY.value = withTiming(0);
+            zoomSavedScale.value = 1;
+            zoomSavedX.value = 0;
+            zoomSavedY.value = 0;
+          } else {
+            zoomSavedScale.value = zoomScale.value;
+            zoomSavedX.value = zoomX.value;
+            zoomSavedY.value = zoomY.value;
+          }
+        }),
+    [zoomScale, zoomSavedScale, zoomX, zoomY, zoomSavedX, zoomSavedY, canvasW, canvasH],
+  );
+
+  const panZoom = useMemo(
+    () =>
+      Gesture.Pan()
+        .minPointers(2)
+        .maxPointers(2)
+        .onStart(() => {
+          'worklet';
+          zoomSavedX.value = zoomX.value;
+          zoomSavedY.value = zoomY.value;
+        })
+        .onUpdate((e) => {
+          'worklet';
+          if (zoomScale.value <= 1) return;
+          const clamped = clampPan(
+            zoomScale.value,
+            zoomSavedX.value + e.translationX,
+            zoomSavedY.value + e.translationY,
+            canvasW.value,
+            canvasH.value,
+          );
+          zoomX.value = clamped.x;
+          zoomY.value = clamped.y;
+        }),
+    [zoomScale, zoomX, zoomY, zoomSavedX, zoomSavedY, canvasW, canvasH],
+  );
+
+  const drawGesture = useMemo(
+    () => Gesture.Simultaneous(pinch, panZoom, Gesture.Race(pan, tap)),
+    [pinch, panZoom, tap, pan],
+  );
+
+  const zoomStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: zoomX.value },
+      { translateY: zoomY.value },
+      { scale: zoomScale.value },
+    ],
+  }));
+
+  useEffect(() => {
+    zoomScale.value = withTiming(1, { duration: 160 });
+    zoomX.value = withTiming(0, { duration: 160 });
+    zoomY.value = withTiming(0, { duration: 160 });
+    zoomSavedScale.value = 1;
+    zoomSavedX.value = 0;
+    zoomSavedY.value = 0;
+  }, [pageIndex, zoomScale, zoomX, zoomY, zoomSavedScale, zoomSavedX, zoomSavedY]);
+
+  useEffect(() => {
+    const rects = pageRedactions.map((redaction) => ({
+      x: redaction.rect.x,
+      y: redaction.rect.y,
+      width: redaction.rect.width,
+      height: redaction.rect.height,
+      style: redaction.style,
+    }));
+    if (draft) {
+      rects.push({
+        x: draft.x,
+        y: draft.y,
+        width: draft.width,
+        height: draft.height,
+        style: 'black',
+      });
+    }
+    viewerRef.current?.setOverlay(rects);
+  }, [pageRedactions, draft, pageIndex, reportedFit]);
 
   const onToggleFilter = useCallback((filter: RedactionFilterId) => {
     void Haptic.selection();
@@ -595,8 +802,6 @@ export default function EditorScreen() {
 
   const onFocusThreat = (threat: ThreatItem) => {
     setPageIndex(threat.pageIndex);
-    setFocusPulseId(threat.id);
-    setTimeout(() => setFocusPulseId(null), 1200);
     void Haptic.selection();
   };
 
@@ -621,7 +826,6 @@ export default function EditorScreen() {
   }
 
   const activeUri = renderUri ?? uri;
-  const draftPx = draft ? toScreen(draft) : null;
   const displayTitle = (title || 'Document').replace(/\.pdf$/i, '');
 
   return (
@@ -667,54 +871,38 @@ export default function EditorScreen() {
         <CategoryFilterBar threats={threats} onToggle={onToggleFilter} />
 
         <View style={styles.canvas} onLayout={onCanvasLayout}>
-          <PdfPageViewer
-            ref={viewerRef}
-            uri={activeUri}
-            pageIndex={pageIndex}
-            onTokensExtracted={onTokensExtracted}
-            onPageFit={(fit) =>
-              setPageNatural({ width: fit.pageWidth, height: fit.pageHeight })
-            }
-          />
           <GestureDetector gesture={drawGesture}>
-            <View style={StyleSheet.absoluteFill} pointerEvents="box-only">
-              {pageRedactions.map((r) => (
-                <View
-                  key={r.id}
-                  style={[
-                    styles.rect,
-                    {
-                      left: toScreen(r.rect).left,
-                      top: toScreen(r.rect).top,
-                      width: toScreen(r.rect).width,
-                      height: toScreen(r.rect).height,
-                      backgroundColor:
-                        r.style === 'blur'
-                          ? 'rgba(80,80,80,0.82)'
-                          : REDACTION_STYLE_COLOR[r.style],
-                      borderWidth: focusPulseId === r.id ? 2 : 0,
-                      borderColor: AppleDS.amber,
-                    },
-                  ]}
+            <Animated.View style={styles.gestureSurface}>
+              <Animated.View style={[styles.zoomSurface, zoomStyle]} pointerEvents="none">
+                <PdfPageViewer
+                  ref={viewerRef}
+                  uri={activeUri}
+                  pageIndex={pageIndex}
+                  onTokensExtracted={onTokensExtracted}
+                onPageFit={(fit) => {
+                  setPageNatural((prev) =>
+                    prev.width === fit.pageWidth && prev.height === fit.pageHeight
+                      ? prev
+                      : { width: fit.pageWidth, height: fit.pageHeight },
+                  );
+                  setReportedFit((prev) => {
+                    if (
+                      prev &&
+                      Math.abs(prev.renderWidth - fit.renderWidth) < 0.5 &&
+                      Math.abs(prev.renderHeight - fit.renderHeight) < 0.5 &&
+                      Math.abs(prev.offsetX - fit.offsetX) < 0.5 &&
+                      Math.abs(prev.offsetY - fit.offsetY) < 0.5 &&
+                      Math.abs(prev.containerWidth - fit.containerWidth) < 0.5 &&
+                      Math.abs(prev.containerHeight - fit.containerHeight) < 0.5
+                    ) {
+                      return prev;
+                    }
+                    return fit;
+                  });
+                }}
                 />
-              ))}
-              {draft && draftPx ? (
-                <View
-                  style={[
-                    styles.rect,
-                    {
-                      left: draftPx.left,
-                      top: draftPx.top,
-                      width: draftPx.width,
-                      height: draftPx.height,
-                      // Crisp solid black marker fill while dragging.
-                      backgroundColor: '#000000',
-                      opacity: 1,
-                    },
-                  ]}
-                />
-              ) : null}
-            </View>
+              </Animated.View>
+            </Animated.View>
           </GestureDetector>
         </View>
 
@@ -752,7 +940,7 @@ export default function EditorScreen() {
           </Pressable>
         </View>
 
-        <FloatingToolbar>
+        <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <View style={styles.toolbarRow}>
             {(['smart', 'manual'] as RedactionMode[]).map((m) => (
               <Pressable
@@ -782,6 +970,7 @@ export default function EditorScreen() {
                 void Haptic.selection();
               }}
               style={styles.styleDotWrap}
+              accessibilityLabel={`Color ${REDACTION_STYLE_LABEL[style]}`}
             >
               <View
                 style={[
@@ -794,6 +983,7 @@ export default function EditorScreen() {
             <Pressable
               onPress={() => void undo()}
               disabled={manualRedactions.length === 0}
+              accessibilityLabel="Undo"
             >
               <Ionicons
                 name="arrow-undo"
@@ -806,10 +996,10 @@ export default function EditorScreen() {
               />
             </Pressable>
           </View>
-          <Text style={[typography.caption, { marginTop: 6, textAlign: 'center' }]}>
-            Color: {REDACTION_STYLE_LABEL[style]}
+          <Text style={styles.dockHint}>
+            {REDACTION_STYLE_LABEL[style]} · Pinch to zoom · Drag to black out
           </Text>
-        </FloatingToolbar>
+        </View>
       </SafeAreaView>
 
       {loadingDoc ? <LoadingOverlay message="Opening document…" /> : null}
@@ -852,11 +1042,11 @@ const styles = StyleSheet.create({
     color: AppleDS.labelTertiary,
   },
   statusPill: {
-    marginHorizontal: 24,
-    marginTop: 12,
-    marginBottom: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 0,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderRadius: 10,
     backgroundColor: AppleDS.surfaceElevated,
     borderWidth: StyleSheet.hairlineWidth,
@@ -890,13 +1080,31 @@ const styles = StyleSheet.create({
   canvas: {
     flex: 1,
     marginHorizontal: 8,
+    marginTop: 4,
     borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: AppleDS.surfaceElevated,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: AppleDS.separator,
+    backgroundColor: '#111111',
   },
-  rect: { position: 'absolute', overflow: 'hidden' },
+  gestureSurface: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+  },
+  zoomSurface: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  dock: {
+    paddingTop: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#1c1c1e',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: AppleDS.separator,
+  },
+  dockHint: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginTop: 6,
+    color: AppleDS.labelTertiary,
+  },
   pageRow: {
     flexDirection: 'row',
     alignItems: 'center',

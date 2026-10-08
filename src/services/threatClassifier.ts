@@ -14,9 +14,9 @@ import { uuidv4 } from './redactionEngine';
  * Every hit inherits a real glyph rect — never invents empty boxes.
  */
 
-/** Standalone currency / numeric totals (symbol optional). */
-export const FINANCIAL_RE =
-  /(?:[\$€£R¥]\s?)?\b\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})\b/g;
+/** Currency amounts, accounting negatives, and decimal money. Skips bare IDs. */
+export const MONEY_RE =
+  /(?:[\$€£]\s*|\bR\s*)-?\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?|\(\d{1,3}(?:[,\s]\d{3})*\.\d{2}\)|\b-?\d{1,3}(?:[,\s]\d{3})*\.\d{2}\b/g;
 
 /** Account / card digit runs (8–20 digits, optional spaces or dashes). */
 export const ACCOUNT_RE = /\b(?:\d[ -]*?){8,20}\b/g;
@@ -42,9 +42,16 @@ export const ADDRESS_RE =
 /** 9-digit ABA routing numbers (checksum applied by the caller). */
 export const ROUTING_RE = /\b\d{9}\b/g;
 
-/** Tax / national ID labels with an alphanumeric value. */
+/**
+ * Tax / VAT / national ID labels with a value.
+ * Allows "Vat: No: 010335-1338" and "Tax: 4470299720".
+ */
 export const TAX_ID_RE =
-  /\b(?:ssn|sin|tin|vat|tax\s*id|national\s*id|id\s*(?:no|number))\b[:\s#-]*([A-Z0-9][A-Z0-9-]{7,14})/gi;
+  /\b(?:ssn|sin|tin|vat|tax(?:\s*id)?|national\s*id|id\s*(?:no|number))\b(?:\s*[:.]?\s*(?:no|number|nr|id))?\s*[:.#-]?\s*([A-Z0-9][A-Z0-9\-/]{5,20})/gi;
+
+/** Mixed reference / transaction ids such as 991a-988204634960. */
+export const REFERENCE_RE =
+  /\b(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9]{3,}(?:-[A-Za-z0-9]{3,})+\b/g;
 
 /** Passport labels. */
 export const PASSPORT_RE = /\bpassport\b[:\s#-]*([A-Z0-9]{6,13})/gi;
@@ -53,9 +60,9 @@ export const PASSPORT_RE = /\bpassport\b[:\s#-]*([A-Z0-9]{6,13})/gi;
 export const CLASSIFICATION_RE =
   /\b(?:confidential|privileged|do not disclose|proprietary)\b/gi;
 
-/** Invoice / receipt anchor labels. */
+/** Invoice / receipt anchor labels. VAT and tax IDs are matched separately. */
 export const INVOICE_ANCHOR_RE =
-  /(?:total|balance due|amount due|subtotal|billed to|invoice to|recipient|vat|tax|payment due|price)\b/gi;
+  /(?:total|balance due|amount due|subtotal|billed to|invoice to|recipient|payment due|price)\b/gi;
 
 /** Bank statement balance anchors. */
 export const BALANCE_ANCHOR_RE =
@@ -232,36 +239,60 @@ function makeItem(
   };
 }
 
-function matchCategory(
+type ClaimedSpan = { start: number; end: number };
+
+function overlapsSpan(spans: ClaimedSpan[], start: number, end: number): boolean {
+  return spans.some((span) => start < span.end && end > span.start);
+}
+
+function matchLine(
   category: ThreatCategory,
   re: RegExp,
-  token: TextToken,
+  line: LineGroup,
   out: ThreatItem[],
   badgeFor: (m: string) => ThreatBadge,
+  claimed: ClaimedSpan[],
   filter?: (m: string) => boolean,
   displayFor?: (m: string) => string,
+  valueOf?: (m: RegExpMatchArray) => string,
 ) {
-  const text = token.text;
+  const text = line.text;
   if (!text.replace(/\s/g, '').length) return;
 
   for (const m of text.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))) {
-    const value = m[0];
+    const value = (valueOf?.(m) ?? m[0]).trim();
+    if (!value) continue;
     if (filter && !filter(value)) continue;
-    const idx = m.index ?? text.indexOf(value);
-    if (idx < 0) continue;
+    const raw = m[0];
+    const rawIndex = m.index ?? text.indexOf(raw);
+    if (rawIndex < 0) continue;
+    const local = raw.indexOf(value);
+    const idx = local >= 0 ? rawIndex + local : rawIndex;
+    const length = value.length;
+    if (overlapsSpan(claimed, idx, idx + length)) continue;
+    const rect = rectForSpan(line, idx, length);
+    if (rect.width > 0.95 && rect.height > 0.08) continue;
+    if (rect.height > 0.2) continue;
+    claimed.push({ start: idx, end: idx + length });
     pushUnique(
       out,
       makeItem(
         category,
         badgeFor(value),
         value,
-        token.pageIndex,
-        sliceRectForMatch(token.rect, text, idx, value.length),
+        line.pageIndex,
+        rect,
         displayFor?.(value),
       ),
     );
   }
 }
+
+type LineSpan = {
+  start: number;
+  end: number;
+  rect: NormalizedRect;
+};
 
 type LineGroup = {
   midY: number;
@@ -269,7 +300,40 @@ type LineGroup = {
   parts: TextToken[];
   text: string;
   rect: NormalizedRect;
+  spans: LineSpan[];
 };
+
+const NAME_STOP =
+  /^(total|balance|invoice|statement|amount|paid|tax|vat|subtotal|page|date|receipt|debit|credit|description|transfer|reference|account|number|phone|email|address|qty|quantity|item|items|payment|due|from|to|the|and|no|id)$/i;
+
+function isUsefulName(text: string): boolean {
+  const words = text
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^A-Za-z]/g, ''))
+    .filter((word) => word.length > 1 && !NAME_STOP.test(word));
+  return words.length >= 2 && words.length <= 6 && words.every((word) => /[A-Za-z]{2,}/.test(word));
+}
+
+/** Join word tokens, inserting a space only when the glyphs are not touching. */
+function joinLineParts(parts: TextToken[]): { text: string; spans: LineSpan[] } {
+  let text = '';
+  const spans: LineSpan[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const piece = parts[i].text.replace(/\s+/g, ' ').trim();
+    if (!piece) continue;
+    if (text.length > 0) {
+      const prev = parts[i - 1];
+      const gap = parts[i].rect.x - (prev.rect.x + prev.rect.width);
+      const tight = gap <= Math.max(prev.rect.height * 0.35, 0.006);
+      text += tight ? '' : ' ';
+    }
+    const start = text.length;
+    text += piece;
+    spans.push({ start, end: text.length, rect: parts[i].rect });
+  }
+  return { text, spans };
+}
 
 function buildLineGroups(tokens: TextToken[]): LineGroup[] {
   const byPage = new Map<number, TextToken[]>();
@@ -300,12 +364,8 @@ function buildLineGroups(tokens: TextToken[]): LineGroup[] {
 
     for (const g of groups) {
       g.parts.sort((a, b) => a.rect.x - b.rect.x);
-      const text = g.parts
-        .map((p) => p.text)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (text.length < 1) continue;
+      const joined = joinLineParts(g.parts);
+      if (joined.text.length < 1) continue;
       const x0 = Math.min(...g.parts.map((p) => p.rect.x));
       const y0 = Math.min(...g.parts.map((p) => p.rect.y));
       const x1 = Math.max(...g.parts.map((p) => p.rect.x + p.rect.width));
@@ -314,7 +374,8 @@ function buildLineGroups(tokens: TextToken[]): LineGroup[] {
         midY: g.midY,
         pageIndex,
         parts: g.parts,
-        text,
+        text: joined.text,
+        spans: joined.spans,
         rect: {
           x: x0,
           y: y0,
@@ -339,36 +400,36 @@ export function tokensToSnapLines(tokens: TextToken[]): OcrSnapLine[] {
   }));
 }
 
+/**
+ * Box only the glyphs that the match covers. Table gaps stay untouched,
+ * so an amount in the last column is not painted across the description.
+ */
+function rectForSpan(line: LineGroup, start: number, length: number): NormalizedRect {
+  const end = start + Math.max(length, 1);
+  if (line.spans.length > 1) {
+    const hits = line.spans.filter((span) => span.end > start && span.start < end);
+    if (hits.length > 0) {
+      return hits.map((span) => span.rect).reduce((a, b) => unionRects(a, b));
+    }
+  }
+  return sliceRectForMatch(line.rect, line.text, start, length);
+}
+
 function isNameAnchor(label: string): boolean {
   return /billed to|invoice to|recipient/i.test(label);
 }
 
 function isAmountAnchor(label: string): boolean {
-  return /total|balance due|amount due|subtotal|vat|tax|payment due|price|balance|available funds/i.test(
+  return /total|balance due|amount due|subtotal|payment due|price|balance|available funds/i.test(
     label,
-  );
-}
-
-function extractValueAfterLabel(
-  line: LineGroup,
-  labelIndex: number,
-  labelLength: number,
-): { text: string; rect: NormalizedRect } | null {
-  const after = line.text.slice(labelIndex + labelLength).replace(/^[\s:.\-–—]+/, '');
-  if (!after.trim()) return null;
-  const start = line.text.indexOf(after, labelIndex + labelLength);
-  if (start < 0) return null;
-  return {
-    text: after.trim(),
-    rect: sliceRectForMatch(line.rect, line.text, start, after.trim().length),
-  };
+  ) && !/\bvat\b|\btax\b/i.test(label);
 }
 
 function firstAmountInText(
   text: string,
   rect: NormalizedRect,
 ): { text: string; rect: NormalizedRect } | null {
-  const m = text.match(new RegExp(FINANCIAL_RE.source, 'g'));
+  const m = text.match(new RegExp(MONEY_RE.source, 'g'));
   if (!m || !m[0]) return null;
   const idx = text.indexOf(m[0]);
   if (idx < 0) return null;
@@ -378,8 +439,21 @@ function firstAmountInText(
   };
 }
 
+function amountOnLine(
+  line: LineGroup,
+  fromIndex = 0,
+): { text: string; rect: NormalizedRect; index: number } | null {
+  const slice = line.text.slice(fromIndex);
+  const found = firstAmountInText(slice, line.rect);
+  if (!found) return null;
+  const index = fromIndex + slice.indexOf(found.text);
+  if (index < fromIndex) return null;
+  return { text: found.text, index, rect: rectForSpan(line, index, found.text.length) };
+}
+
 /**
- * Anchor-based extraction: label bbox ∪ value to the right OR next line below.
+ * Anchor-based extraction. Only the value glyphs are boxed — never the
+ * rest of the line, and never a VAT/tax label mistaken for a balance.
  */
 function extractAnchors(lines: LineGroup[], out: ThreatItem[]) {
   for (let i = 0; i < lines.length; i++) {
@@ -389,131 +463,75 @@ function extractAnchors(lines: LineGroup[], out: ThreatItem[]) {
     for (const m of text.matchAll(new RegExp(INVOICE_ANCHOR_RE.source, 'gi'))) {
       const label = m[0];
       const idx = m.index ?? 0;
-      const labelRect = sliceRectForMatch(line.rect, text, idx, label.length);
 
-      let value = extractValueAfterLabel(line, idx, label.length);
-      // Prefer amount on same line when this is a money anchor.
-      if (isAmountAnchor(label)) {
-        const sameLineAmt = firstAmountInText(
-          text.slice(idx + label.length),
-          // approximate: slice remaining text region
-          sliceRectForMatch(
-            line.rect,
-            text,
-            idx + label.length,
-            Math.max(text.length - idx - label.length, 1),
-          ),
-        );
-        if (sameLineAmt) value = sameLineAmt;
-      }
-
-      // Fall back to immediately-below next line on same page.
-      if ((!value || !value.text) && i + 1 < lines.length) {
+      if (isNameAnchor(label)) {
         const next = lines[i + 1];
-        if (next.pageIndex === line.pageIndex) {
-          if (isAmountAnchor(label)) {
-            value = firstAmountInText(next.text, next.rect) ?? {
-              text: next.text,
-              rect: next.rect,
-            };
-          } else if (isNameAnchor(label)) {
-            value = { text: next.text, rect: next.rect };
-          } else {
-            value = firstAmountInText(next.text, next.rect) ?? {
-              text: next.text,
-              rect: next.rect,
-            };
-          }
+        if (
+          next &&
+          next.pageIndex === line.pageIndex &&
+          isUsefulName(next.text)
+        ) {
+          pushUnique(
+            out,
+            makeItem(
+              'invoice',
+              'Name',
+              next.text.trim(),
+              line.pageIndex,
+              next.rect,
+              `Billed To: ${next.text.trim()}`,
+            ),
+          );
         }
-      }
-
-      if (!value || !value.text.trim()) {
-        // Still redact the label itself when it's a high-intent field.
-        pushUnique(
-          out,
-          makeItem(
-            isNameAnchor(label) ? 'invoice' : 'invoice',
-            isNameAnchor(label) ? 'Name' : 'Total / Balance',
-            label,
-            line.pageIndex,
-            labelRect,
-            isNameAnchor(label) ? `Billed To: ${label}` : label,
-          ),
-        );
         continue;
       }
 
-      const combined = unionRects(labelRect, value.rect);
-      if (isNameAnchor(label)) {
-        pushUnique(
-          out,
-          makeItem(
-            'invoice',
-            'Name',
-            value.text,
-            line.pageIndex,
-            combined,
-            `Billed To: ${value.text}`,
-          ),
-        );
-      } else {
-        const amount =
-          firstAmountInText(value.text, value.rect)?.text ?? value.text;
-        const displayLabel = /subtotal/i.test(label)
-          ? 'Subtotal'
-          : /vat|tax/i.test(label)
-            ? label.replace(/\b\w/g, (c) => c.toUpperCase())
-            : /balance due|amount due|payment due/i.test(label)
-              ? 'Amount Due'
-              : /price/i.test(label)
-                ? 'Price'
-                : 'Total';
-        pushUnique(
-          out,
-          makeItem(
-            'invoice',
-            'Total / Balance',
-            amount,
-            line.pageIndex,
-            combined,
-            `${displayLabel}: ${amount}`,
-          ),
-        );
-      }
+      if (!isAmountAnchor(label)) continue;
+      const found = amountOnLine(line, idx + label.length) ?? (
+        lines[i + 1] && lines[i + 1].pageIndex === line.pageIndex
+          ? amountOnLine(lines[i + 1], 0)
+          : null
+      );
+      if (!found) continue;
+      const displayLabel = /subtotal/i.test(label)
+        ? 'Subtotal'
+        : /balance due|amount due|payment due/i.test(label)
+          ? 'Amount Due'
+          : /price/i.test(label)
+            ? 'Price'
+            : 'Total';
+      pushUnique(
+        out,
+        makeItem(
+          'invoice',
+          'Total / Balance',
+          found.text,
+          line.pageIndex,
+          found.rect,
+          `${displayLabel}: ${found.text}`,
+        ),
+      );
     }
 
     for (const m of text.matchAll(new RegExp(BALANCE_ANCHOR_RE.source, 'gi'))) {
       const label = m[0];
       const idx = m.index ?? 0;
-      // Skip if already covered as invoice "balance due".
-      if (/balance due/i.test(text)) continue;
-      const labelRect = sliceRectForMatch(line.rect, text, idx, label.length);
-      let value =
-        firstAmountInText(text.slice(idx + label.length), sliceRectForMatch(
-          line.rect,
-          text,
-          idx + label.length,
-          Math.max(text.length - idx - label.length, 1),
-        )) ?? extractValueAfterLabel(line, idx, label.length);
-
-      if ((!value || !value.text) && i + 1 < lines.length) {
-        const next = lines[i + 1];
-        if (next.pageIndex === line.pageIndex) {
-          value = firstAmountInText(next.text, next.rect);
-        }
-      }
-      if (!value) continue;
-
+      const found =
+        amountOnLine(line, idx + label.length) ??
+        (lines[i + 1] && lines[i + 1].pageIndex === line.pageIndex
+          ? amountOnLine(lines[i + 1], 0)
+          : null);
+      if (!found) continue;
       const ending = /closing|ending|available/i.test(label);
       pushUnique(
         out,
         makeItem(
           'banking',
           'Total / Balance',
-          value.text,
+          found.text,
           line.pageIndex,
-          unionRects(labelRect, value.rect),
-          ending ? `Ending Balance: ${value.text}` : `Balance: ${value.text}`,
+          found.rect,
+          ending ? `Ending Balance: ${found.text}` : `Balance: ${found.text}`,
         ),
       );
     }
@@ -532,124 +550,207 @@ export function classifyTextTokens(tokens: TextToken[]): ThreatItem[] {
   // 1) Anchor-based invoice / statement extraction (label + adjacent value).
   extractAnchors(lines, out);
 
-  // 2) Line-level regex for standalone amounts, accounts, contacts, addresses.
+  // 2) Specific identifiers first so a VAT number or email is never
+  //    swallowed by a nearby amount and labeled as a balance.
   for (const line of lines) {
-    const token: TextToken = {
-      text: line.text,
-      pageIndex: line.pageIndex,
-      rect: line.rect,
-    };
     if (line.text.length < 2) continue;
+    const claimed: ClaimedSpan[] = [];
 
-    matchCategory(
-      'invoice',
-      FINANCIAL_RE,
-      token,
+    matchLine(
+      'contact',
+      EMAIL_RE,
+      line,
       out,
-      () => 'Total / Balance',
-      undefined,
-      (m) => `Total: ${m}`,
+      () => 'Email',
+      claimed,
     );
 
-    matchCategory(
+    matchLine(
+      'identity',
+      TAX_ID_RE,
+      line,
+      out,
+      () => 'Tax ID',
+      claimed,
+      undefined,
+      undefined,
+      (m) => (m[1] || m[0]).trim(),
+    );
+
+    matchLine(
+      'identity',
+      PASSPORT_RE,
+      line,
+      out,
+      () => 'Passport',
+      claimed,
+      undefined,
+      undefined,
+      (m) => (m[1] || m[0]).trim(),
+    );
+
+    matchLine(
+      'identity',
+      IDENTITY_RE,
+      line,
+      out,
+      () => 'ID Number',
+      claimed,
+    );
+
+    matchLine(
+      'identity',
+      REFERENCE_RE,
+      line,
+      out,
+      () => 'ID Number',
+      claimed,
+      (m) => m.replace(/-/g, '').length >= 12,
+    );
+
+    matchLine('banking', IBAN_RE, line, out, () => 'IBAN', claimed);
+
+    matchLine(
+      'contact',
+      PHONE_RE,
+      line,
+      out,
+      () => 'Phone Number',
+      claimed,
+      (m) => {
+        const digits = m.replace(/\D/g, '');
+        if (digits.length < 10 || digits.length > 15) return false;
+        if (/^\d+$/.test(m.trim())) return false;
+        if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) return false;
+        return true;
+      },
+    );
+
+    matchLine(
       'banking',
       ACCOUNT_RE,
-      token,
+      line,
       out,
       accountBadge,
+      claimed,
       (m) => {
         const digits = m.replace(/\D/g, '');
         if (isFourDigitYear(digits)) return false;
         if (digits.length < 8 || digits.length > 20) return false;
+        if (/\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/.test(m)) return false;
         if (digits.length >= 13 && digits.length <= 19) return luhnOk(digits);
         return true;
       },
     );
 
-    matchCategory(
+    matchLine(
       'banking',
-      IBAN_RE,
-      token,
+      ROUTING_RE,
+      line,
       out,
-      () => 'IBAN',
+      () => 'Routing Number',
+      claimed,
+      (m) => abaOk(m),
     );
 
-    matchCategory(
-      'contact',
-      PHONE_RE,
-      token,
-      out,
-      () => 'Phone Number',
-      (m) => {
-        const digits = m.replace(/\D/g, '');
-        if (digits.length < 10 || digits.length > 15) return false;
-        if (/^\d+$/.test(m.trim())) return false;
-        if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) {
-          return false;
-        }
-        return true;
-      },
-    );
-
-    matchCategory('contact', EMAIL_RE, token, out, () => 'Email');
-
-    matchCategory(
+    matchLine(
       'contact',
       ADDRESS_RE,
-      token,
+      line,
       out,
       () => 'Address',
+      claimed,
       undefined,
       (m) => `Address: ${m.trim()}`,
     );
 
-    matchCategory(
-      'banking',
-      ROUTING_RE,
-      token,
-      out,
-      () => 'Routing Number',
-      (m) => abaOk(m),
-    );
-
-    matchCategory(
-      'identity',
-      TAX_ID_RE,
-      token,
-      out,
-      () => 'Tax ID',
-    );
-
-    matchCategory(
-      'identity',
-      PASSPORT_RE,
-      token,
-      out,
-      () => 'Passport',
-    );
-
-    matchCategory(
+    matchLine(
       'marker',
       CLASSIFICATION_RE,
-      token,
+      line,
       out,
       () => 'Classification',
+      claimed,
     );
 
-    matchCategory(
-      'identity',
-      IDENTITY_RE,
-      token,
+    matchLine(
+      'invoice',
+      MONEY_RE,
+      line,
       out,
-      () => 'ID Number',
+      () => 'Total / Balance',
+      claimed,
+      (m) => m.replace(/[^\d]/g, '').length >= 3,
+      (m) => `Amount: ${m}`,
     );
   }
 
-  // 3) Union near-adjacent same-line boxes so we never draw floating crumbs.
-  return mergeSameLineThreats(out).sort(
+  // 3) Drop coarse boxes that swallowed a tighter, more specific hit.
+  return dedupeThreats(mergeSameLineThreats(out)).sort(
     (a, b) =>
       a.pageIndex - b.pageIndex || a.rect.y - b.rect.y || a.rect.x - b.rect.x,
   );
+}
+
+function intersectionArea(a: NormalizedRect, b: NormalizedRect): number {
+  const x0 = Math.max(a.x, b.x);
+  const y0 = Math.max(a.y, b.y);
+  const x1 = Math.min(a.x + a.width, b.x + b.width);
+  const y1 = Math.min(a.y + a.height, b.y + b.height);
+  if (x1 <= x0 || y1 <= y0) return 0;
+  return (x1 - x0) * (y1 - y0);
+}
+
+const SPECIFIC_BADGES = new Set<ThreatBadge>([
+  'Email',
+  'Phone Number',
+  'Tax ID',
+  'Passport',
+  'ID Number',
+  'Card Number',
+  'IBAN',
+  'Address',
+  'Routing Number',
+]);
+
+/** Keep the tighter box when two hits cover the same glyphs. */
+function dedupeThreats(items: ThreatItem[]): ThreatItem[] {
+  const filtered = items.filter((item) => {
+    if (item.badge !== 'Total / Balance') return true;
+    return !items.some((other) => {
+      if (other.id === item.id || other.pageIndex !== item.pageIndex) return false;
+      if (!SPECIFIC_BADGES.has(other.badge)) return false;
+      const otherArea = other.rect.width * other.rect.height;
+      if (otherArea <= 0) return false;
+      return intersectionArea(item.rect, other.rect) / otherArea > 0.6;
+    });
+  });
+
+  const kept: ThreatItem[] = [];
+  for (const item of filtered) {
+    const dup = kept.find((prev) => {
+      if (prev.pageIndex !== item.pageIndex || prev.badge !== item.badge) return false;
+      const area = Math.min(
+        prev.rect.width * prev.rect.height,
+        item.rect.width * item.rect.height,
+      );
+      if (area <= 0) return false;
+      return intersectionArea(prev.rect, item.rect) / area > 0.55;
+    });
+    if (!dup) {
+      kept.push({ ...item, rect: { ...item.rect } });
+      continue;
+    }
+    const dupArea = dup.rect.width * dup.rect.height;
+    const itemArea = item.rect.width * item.rect.height;
+    if (itemArea < dupArea * 0.85) {
+      dup.rect = { ...item.rect };
+      dup.text = item.text;
+      dup.displayText = item.displayText;
+      dup.category = item.category;
+    }
+  }
+  return kept;
 }
 
 /**
@@ -668,11 +769,13 @@ function mergeSameLineThreats(items: ThreatItem[]): ThreatItem[] {
 
   for (const item of sorted) {
     const prev = out[out.length - 1];
-    if (
+      if (
       prev &&
       prev.pageIndex === item.pageIndex &&
       prev.category === item.category &&
       prev.badge === item.badge &&
+      prev.badge !== 'Total / Balance' &&
+      prev.badge !== 'Card Number' &&
       Math.abs(
         prev.rect.y + prev.rect.height / 2 - (item.rect.y + item.rect.height / 2),
       ) <= yTol

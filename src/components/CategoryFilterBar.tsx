@@ -25,6 +25,7 @@ export function CategoryFilterBar({ threats, onToggle }: Props) {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={styles.scroller}
       contentContainerStyle={styles.row}
     >
       {REDACTION_FILTERS.map((filter) => {
@@ -46,6 +47,12 @@ export function CategoryFilterBar({ threats, onToggle }: Props) {
 }
 
 const styles = StyleSheet.create({
+  scroller: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 48,
+    height: 48,
+  },
   row: {
     paddingHorizontal: 16,
     paddingVertical: 8,

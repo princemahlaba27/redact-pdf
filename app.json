@@ -9,9 +9,10 @@
     "scheme": "redactpdf",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/images/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#ffffff",
+      "imageWidth": 240
     },
     "ios": {
       "icon": "./assets/images/icon.png",
