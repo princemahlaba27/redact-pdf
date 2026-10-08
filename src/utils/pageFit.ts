@@ -15,11 +15,8 @@ export type PageFit = {
 
 /**
  * Compute the displayed page frame inside a container using aspect-fit
- * (identical to CSS object-fit: contain).
- *
- * The page keeps its real aspect ratio and sits at the top of the container
- * so a wide statement is not floating in a vertical gap. Horizontal leftover
- * is centered.
+ * (identical to CSS object-fit: contain). The page keeps its real aspect
+ * ratio and is centered in any leftover space.
  */
 export function computeAspectFit(
   pageWidth: number,
@@ -38,11 +35,12 @@ export function computeAspectFit(
   let renderWidth: number;
   let renderHeight: number;
   let offsetX = 0;
-  const offsetY = 0;
+  let offsetY = 0;
 
   if (imageRatio > containerRatio) {
     renderWidth = cw;
     renderHeight = cw / imageRatio;
+    offsetY = (ch - renderHeight) / 2;
   } else {
     renderHeight = ch;
     renderWidth = ch * imageRatio;

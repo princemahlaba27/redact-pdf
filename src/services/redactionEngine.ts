@@ -241,15 +241,12 @@ function applyRedaction(page: PDFPage, redaction: RedactionRect) {
  * expo-image-manipulator so EXIF orientation never flips the page.
  */
 export async function imagesToPdf(imageUris: string[]): Promise<string> {
-  const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
   const doc = await PDFDocument.create();
   for (const uri of imageUris) {
-    // Force upright pixels — strips EXIF orientation ambiguity.
-    const fixed = await manipulateAsync(uri, [], {
-      compress: 0.92,
-      format: SaveFormat.JPEG,
-    });
-    const base64 = await FileSystem.readAsStringAsync(fixed.uri, {
+    // These URIs are already upright JPEGs. Embed those exact pixels so the
+    // PDF page matches the bitmap Vision measured. A second compress would
+    // change the size and shift every redaction box.
+    const base64 = await FileSystem.readAsStringAsync(uri, {
       encoding: 'base64',
     });
     const imgBytes = base64ToBytes(base64);

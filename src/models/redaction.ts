@@ -3,7 +3,7 @@ export type RedactionMode = 'smart' | 'manual';
 export type RedactionStyle = 'black' | 'blur' | 'white';
 
 export const REDACTION_MODE_LABEL: Record<RedactionMode, string> = {
-  smart: 'Private Details',
+  smart: 'Select',
   manual: 'Draw Box',
 };
 

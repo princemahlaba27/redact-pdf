@@ -33,19 +33,9 @@ export type BurnedPageRaster = {
   base64: string;
 };
 
-export type OverlayRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  style?: string;
-};
-
 export type PdfPageViewerHandle = {
   /** Rasterize every page with blackouts burned into pixels. */
   burnPages: (redactions: RedactionRect[]) => Promise<BurnedPageRaster[]>;
-  /** Draw preview blackouts on the same canvas as the page image. */
-  setOverlay: (rects: OverlayRect[]) => void;
 };
 
 type BridgeMessage =
@@ -107,11 +97,6 @@ export const PdfPageViewer = forwardRef<PdfPageViewerHandle, Props>(
     };
 
     useImperativeHandle(ref, () => ({
-      setOverlay: (rects: OverlayRect[]) => {
-        webRef.current?.injectJavaScript(
-          `window.__setOverlay && window.__setOverlay(${JSON.stringify(JSON.stringify(rects))}); true;`,
-        );
-      },
       burnPages: (redactions: RedactionRect[]) =>
         new Promise<BurnedPageRaster[]>((resolve, reject) => {
           if (!webRef.current || !ready) {

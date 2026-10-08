@@ -701,6 +701,13 @@ function intersectionArea(a: NormalizedRect, b: NormalizedRect): number {
   return (x1 - x0) * (y1 - y0);
 }
 
+/** Intersection over union. 1 means the boxes occupy the same region. */
+export function rectIoU(a: NormalizedRect, b: NormalizedRect): number {
+  const inter = intersectionArea(a, b);
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
+}
+
 const SPECIFIC_BADGES = new Set<ThreatBadge>([
   'Email',
   'Phone Number',
@@ -711,46 +718,60 @@ const SPECIFIC_BADGES = new Set<ThreatBadge>([
   'IBAN',
   'Address',
   'Routing Number',
+  'Name',
 ]);
 
-/** Keep the tighter box when two hits cover the same glyphs. */
-function dedupeThreats(items: ThreatItem[]): ThreatItem[] {
-  const filtered = items.filter((item) => {
-    if (item.badge !== 'Total / Balance') return true;
-    return !items.some((other) => {
-      if (other.id === item.id || other.pageIndex !== item.pageIndex) return false;
-      if (!SPECIFIC_BADGES.has(other.badge)) return false;
-      const otherArea = other.rect.width * other.rect.height;
-      if (otherArea <= 0) return false;
-      return intersectionArea(item.rect, other.rect) / otherArea > 0.6;
-    });
-  });
+function sameTextAndBounds(a: ThreatItem, b: ThreatItem): boolean {
+  if (a.pageIndex !== b.pageIndex) return false;
+  if (a.text.trim().toLowerCase() !== b.text.trim().toLowerCase()) return false;
+  return (
+    Math.abs(a.rect.x - b.rect.x) < 0.02 &&
+    Math.abs(a.rect.y - b.rect.y) < 0.02 &&
+    Math.abs(a.rect.width - b.rect.width) < 0.02 &&
+    Math.abs(a.rect.height - b.rect.height) < 0.02
+  );
+}
 
+function duplicatesThreat(a: ThreatItem, b: ThreatItem): boolean {
+  if (a.pageIndex !== b.pageIndex || a.id === b.id) return false;
+  return rectIoU(a.rect, b.rect) > 0.6 || sameTextAndBounds(a, b);
+}
+
+function preferThreat(keep: ThreatItem, incoming: ThreatItem) {
+  const keepSpecific = SPECIFIC_BADGES.has(keep.badge);
+  const nextSpecific = SPECIFIC_BADGES.has(incoming.badge);
+  const keepArea = keep.rect.width * keep.rect.height;
+  const nextArea = incoming.rect.width * incoming.rect.height;
+  const takeNext =
+    (nextSpecific && !keepSpecific) ||
+    (nextSpecific === keepSpecific && nextArea < keepArea);
+  if (!takeNext) return;
+  keep.rect = { ...incoming.rect };
+  keep.text = incoming.text;
+  keep.displayText = incoming.displayText;
+  keep.badge = incoming.badge;
+  keep.category = incoming.category;
+}
+
+/**
+ * Non-maximum suppression. Boxes with IoU above 0.6, or the same text and
+ * bounds, collapse into one. A specific badge wins over a coarse total.
+ */
+export function suppressDuplicateThreats(items: ThreatItem[]): ThreatItem[] {
   const kept: ThreatItem[] = [];
-  for (const item of filtered) {
-    const dup = kept.find((prev) => {
-      if (prev.pageIndex !== item.pageIndex || prev.badge !== item.badge) return false;
-      const area = Math.min(
-        prev.rect.width * prev.rect.height,
-        item.rect.width * item.rect.height,
-      );
-      if (area <= 0) return false;
-      return intersectionArea(prev.rect, item.rect) / area > 0.55;
-    });
+  for (const item of items) {
+    const dup = kept.find((prev) => duplicatesThreat(prev, item));
     if (!dup) {
       kept.push({ ...item, rect: { ...item.rect } });
       continue;
     }
-    const dupArea = dup.rect.width * dup.rect.height;
-    const itemArea = item.rect.width * item.rect.height;
-    if (itemArea < dupArea * 0.85) {
-      dup.rect = { ...item.rect };
-      dup.text = item.text;
-      dup.displayText = item.displayText;
-      dup.category = item.category;
-    }
+    preferThreat(dup, item);
   }
   return kept;
+}
+
+function dedupeThreats(items: ThreatItem[]): ThreatItem[] {
+  return suppressDuplicateThreats(items);
 }
 
 /**

@@ -4,18 +4,17 @@
     "slug": "redact-pdf",
     "version": "1.0.1",
     "orientation": "default",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "redactpdf",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/icon.png",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff",
-      "imageWidth": 240
+      "backgroundColor": "#000000"
     },
     "ios": {
-      "icon": "./assets/images/icon.png",
+      "icon": "./assets/icon.png",
       "supportsTablet": false,
       "bundleIdentifier": "com.princemahlaba.redactpdf",
       "buildNumber": "16",

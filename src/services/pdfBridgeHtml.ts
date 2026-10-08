@@ -14,14 +14,12 @@ export function buildPdfBridgeHtml(): string {
   <style>
     html, body { margin:0; padding:0; width:100%; height:100%; background:#111; overflow:hidden; }
     #stage { width:100%; height:100%; position:relative; overflow:hidden; background:#111; }
-    canvas { position:absolute; display:block; }
-    #c { background:#fff; }
-    #o { background:transparent; pointer-events:none; }
+    canvas { position:absolute; left:0; top:0; width:100%; height:100%; display:block; background:#fff; }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
-  <div id="stage"><canvas id="c"></canvas><canvas id="o"></canvas></div>
+  <div id="stage"><canvas id="c"></canvas></div>
   <script>
     const pdfjsLib = window['pdfjs-dist/build/pdf'];
     pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -29,7 +27,6 @@ export function buildPdfBridgeHtml(): string {
 
     let pdfDoc = null;
     let currentPage = 1;
-    let overlayRects = [];
 
     function post(type, extra) {
       window.ReactNativeWebView &&
@@ -182,37 +179,6 @@ export function buildPdfBridgeHtml(): string {
       return all;
     }
 
-    /**
-     * Paint blackouts in the same pixel space as the page image.
-     * Normalized UI rects (top-left) map 1:1 onto this canvas, which is
-     * sized to the page's real aspect ratio — never stretched.
-     */
-    function drawOverlay() {
-      const pageCanvas = document.getElementById('c');
-      const overlay = document.getElementById('o');
-      if (!pageCanvas || !overlay) return;
-      const w = pageCanvas.width || 1;
-      const h = pageCanvas.height || 1;
-      if (overlay.width !== w) overlay.width = w;
-      if (overlay.height !== h) overlay.height = h;
-      overlay.style.width = pageCanvas.style.width;
-      overlay.style.height = pageCanvas.style.height;
-      overlay.style.left = pageCanvas.style.left;
-      overlay.style.top = pageCanvas.style.top;
-      const ctx = overlay.getContext('2d');
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      const rects = overlayRects || [];
-      for (let i = 0; i < rects.length; i++) {
-        const box = rects[i];
-        if (!box || !(box.width > 0) || !(box.height > 0)) continue;
-        if (box.style === 'white') ctx.fillStyle = '#ffffff';
-        else if (box.style === 'blur') ctx.fillStyle = '#5a5a5a';
-        else ctx.fillStyle = '#000000';
-        ctx.fillRect(box.x * w, box.y * h, Math.max(box.width * w, 1), Math.max(box.height * h, 1));
-      }
-    }
-
     async function paint(pageNum) {
       if (!pdfDoc) return;
       const page = await pdfDoc.getPage(pageNum);
@@ -220,27 +186,24 @@ export function buildPdfBridgeHtml(): string {
       const ctx = canvas.getContext('2d');
       const stage = document.getElementById('stage');
       const base = pageViewport(page, 1);
+      // The native container is already the page's aspect-fit frame.
+      // Fill that frame exactly so the bitmap is not letterboxed again.
       const stageW = stage.clientWidth || window.innerWidth || 1;
       const stageH = stage.clientHeight || window.innerHeight || 1;
       const fit = Math.min(stageW / base.width, stageH / base.height);
-      const cssW = Math.max(1, Math.round(base.width * fit));
-      const cssH = Math.max(1, Math.round(base.height * fit));
       const pixelRatio = Math.min(window.devicePixelRatio || 2, 3);
-      const longest = Math.max(cssW, cssH) * pixelRatio;
-      const ratio = longest > 2800 ? 2800 / Math.max(cssW, cssH) : pixelRatio;
-      const viewport = pageViewport(page, fit * ratio);
+      const longest = Math.max(stageW, stageH) * pixelRatio;
+      const ratio = longest > 2800 ? 2800 / Math.max(stageW, stageH) : pixelRatio;
+      const viewport = pageViewport(page, Math.max(fit, 0.01) * ratio);
       canvas.width = Math.max(1, Math.floor(viewport.width));
       canvas.height = Math.max(1, Math.floor(viewport.height));
-      canvas.style.width = cssW + 'px';
-      canvas.style.height = cssH + 'px';
-      canvas.style.left = Math.max(0, Math.round((stageW - cssW) / 2)) + 'px';
+      canvas.style.left = '0px';
       canvas.style.top = '0px';
+      canvas.style.width = stageW + 'px';
+      canvas.style.height = stageH + 'px';
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-      drawOverlay();
-      const rect = canvas.getBoundingClientRect();
-      const stageRect = stage.getBoundingClientRect();
       post('rendered', {
         page: pageNum,
         pages: pdfDoc.numPages,
@@ -249,12 +212,12 @@ export function buildPdfBridgeHtml(): string {
         height: viewport.height,
         pageWidth: base.width,
         pageHeight: base.height,
-        stageWidth: stageRect.width || stageW,
-        stageHeight: stageRect.height || stageH,
-        renderWidth: rect.width || cssW,
-        renderHeight: rect.height || cssH,
-        offsetX: (rect.left - stageRect.left),
-        offsetY: (rect.top - stageRect.top)
+        stageWidth: stageW,
+        stageHeight: stageH,
+        renderWidth: stageW,
+        renderHeight: stageH,
+        offsetX: 0,
+        offsetY: 0
       });
     }
 
@@ -325,15 +288,6 @@ export function buildPdfBridgeHtml(): string {
       } catch (err) {
         post('error', { message: String(err) });
       }
-    };
-
-    window.__setOverlay = function(payload) {
-      try {
-        overlayRects = typeof payload === 'string' ? JSON.parse(payload) : (payload || []);
-      } catch (err) {
-        overlayRects = [];
-      }
-      drawOverlay();
     };
 
     window.__burnPages = async function(rectsJson) {

@@ -70,33 +70,52 @@ import {
 /** Vertical snap radius (pt) for the text-snap highlighter brush. */
 const SNAP_RADIUS_PT = 16;
 
+/** Map a canvas touch back to canvas space after the page view's zoom. */
 function contentPoint(
   x: number,
   y: number,
   scale: number,
   tx: number,
   ty: number,
-  width: number,
-  height: number,
+  frameX: number,
+  frameY: number,
+  frameW: number,
+  frameH: number,
 ) {
   'worklet';
-  const cx = width / 2;
-  const cy = height / 2;
+  const cx = frameX + frameW / 2;
+  const cy = frameY + frameH / 2;
   return {
     x: (x - tx - cx) / scale + cx,
     y: (y - ty - cy) / scale + cy,
   };
 }
 
-function clampPan(scale: number, tx: number, ty: number, width: number, height: number) {
+/** Keep the zoomed page from sliding entirely off the canvas. */
+function clampPan(
+  scale: number,
+  tx: number,
+  ty: number,
+  frameX: number,
+  frameY: number,
+  frameW: number,
+  frameH: number,
+  canvasW: number,
+  canvasH: number,
+) {
   'worklet';
-  if (scale <= 1) return { x: 0, y: 0 };
-  const maxX = (width * (scale - 1)) / 2;
-  const maxY = (height * (scale - 1)) / 2;
-  return {
-    x: Math.min(maxX, Math.max(-maxX, tx)),
-    y: Math.min(maxY, Math.max(-maxY, ty)),
-  };
+  if (scale <= 1.001) return { x: 0, y: 0 };
+  const restX = frameX + frameW / 2;
+  const restY = frameY + frameH / 2;
+  const halfW = (frameW * scale) / 2;
+  const halfH = (frameH * scale) / 2;
+  const minCx = halfW * 2 >= canvasW ? canvasW - halfW : halfW;
+  const maxCx = halfW * 2 >= canvasW ? halfW : canvasW - halfW;
+  const minCy = halfH * 2 >= canvasH ? canvasH - halfH : halfH;
+  const maxCy = halfH * 2 >= canvasH ? halfH : canvasH - halfH;
+  const cx = Math.min(maxCx, Math.max(minCx, restX + tx));
+  const cy = Math.min(maxCy, Math.max(minCy, restY + ty));
+  return { x: cx - restX, y: cy - restY };
 }
 
 function statusCopy(total: number, selected: number): string {
@@ -119,6 +138,7 @@ export default function EditorScreen() {
   const consumePending = usePendingExport((s) => s.consumePending);
   const viewerRef = useRef<PdfPageViewerHandle>(null);
   const visionSeededRef = useRef(false);
+  const imageOriginRef = useRef(false);
 
   const [renderUri, setRenderUri] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(1);
@@ -133,7 +153,6 @@ export default function EditorScreen() {
   const [loadingDoc, setLoadingDoc] = useState(true);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [pageNatural, setPageNatural] = useState({ width: 1, height: 1 });
-  const [reportedFit, setReportedFit] = useState<PageFit | null>(null);
   const zoomScale = useSharedValue(1);
   const zoomX = useSharedValue(0);
   const zoomY = useSharedValue(0);
@@ -142,6 +161,11 @@ export default function EditorScreen() {
   const zoomSavedY = useSharedValue(0);
   const canvasW = useSharedValue(1);
   const canvasH = useSharedValue(1);
+  const frameX = useSharedValue(0);
+  const frameY = useSharedValue(0);
+  const frameW = useSharedValue(1);
+  const frameH = useSharedValue(1);
+  const drawEnabled = useSharedValue(true);
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
   const drawArmedAt = useSharedValue(0);
@@ -160,10 +184,13 @@ export default function EditorScreen() {
   }, []);
 
   // Seed Private Details from Apple Vision when this doc came from photos.
+  // One scan of the upright JPEG. Do not OCR the wrapped PDF again.
   useEffect(() => {
     const { tokens, lines, fromImages } =
       useOcrSession.getState().consumePending();
-    if (!fromImages || tokens.length === 0) return;
+    if (!fromImages) return;
+    imageOriginRef.current = true;
+    if (tokens.length === 0) return;
     visionSeededRef.current = true;
     setDetecting(true);
     try {
@@ -194,7 +221,7 @@ export default function EditorScreen() {
         if (cancelled) return;
         setRenderUri(cached);
         setPageCount(await getPdfPageCount(cached));
-        setReportedFit(null);
+        if (imageOriginRef.current) return;
         setDetecting(true);
         try {
           const scan = await scanDocumentOnDevice(cached);
@@ -243,33 +270,17 @@ export default function EditorScreen() {
 
   const selectedCount = threats.filter((t) => t.enabled).length;
 
-  /** Page frame reported by the viewer, scaled into the RN canvas. */
-  const pageFit: PageFit = useMemo(() => {
-    if (
-      reportedFit &&
-      reportedFit.containerWidth > 1 &&
-      reportedFit.renderWidth > 1 &&
-      canvasSize.width > 1
-    ) {
-      const sx = canvasSize.width / reportedFit.containerWidth;
-      const sy = canvasSize.height / reportedFit.containerHeight;
-      return {
-        ...reportedFit,
-        offsetX: reportedFit.offsetX * sx,
-        offsetY: reportedFit.offsetY * sy,
-        renderWidth: reportedFit.renderWidth * sx,
-        renderHeight: reportedFit.renderHeight * sy,
-        containerWidth: canvasSize.width,
-        containerHeight: canvasSize.height,
-      };
-    }
-    return computeAspectFit(
-      pageNatural.width,
-      pageNatural.height,
-      canvasSize.width,
-      canvasSize.height,
-    );
-  }, [reportedFit, pageNatural.width, pageNatural.height, canvasSize.width, canvasSize.height]);
+  /** Exact pixel frame of the contained page. Overlay boxes use this same rect. */
+  const pageFit: PageFit = useMemo(
+    () =>
+      computeAspectFit(
+        pageNatural.width,
+        pageNatural.height,
+        canvasSize.width,
+        canvasSize.height,
+      ),
+    [pageNatural.width, pageNatural.height, canvasSize.width, canvasSize.height],
+  );
 
   const onTokensExtracted = useCallback(
     (tokens: TextToken[], pages: number) => {
@@ -469,8 +480,12 @@ export default function EditorScreen() {
       Gesture.Pan()
         .maxPointers(1)
         .manualActivation(true)
-        .onTouchesDown((e) => {
+        .onTouchesDown((e, manager) => {
           'worklet';
+          if (!drawEnabled.value) {
+            manager.fail();
+            return;
+          }
           const t = e.allTouches[0];
           if (!t) return;
           touchStartX.value = t.x;
@@ -479,7 +494,7 @@ export default function EditorScreen() {
         })
         .onTouchesMove((e, manager) => {
           'worklet';
-          if (e.numberOfTouches > 1) {
+          if (!drawEnabled.value || e.numberOfTouches > 1) {
             manager.fail();
             return;
           }
@@ -496,8 +511,10 @@ export default function EditorScreen() {
             zoomScale.value,
             zoomX.value,
             zoomY.value,
-            canvasW.value,
-            canvasH.value,
+            frameX.value,
+            frameY.value,
+            frameW.value,
+            frameH.value,
           );
           runOnJS(syncSnapStroke)(p.x, p.y, true);
         })
@@ -509,8 +526,10 @@ export default function EditorScreen() {
             zoomScale.value,
             zoomX.value,
             zoomY.value,
-            canvasW.value,
-            canvasH.value,
+            frameX.value,
+            frameY.value,
+            frameW.value,
+            frameH.value,
           );
           runOnJS(syncSnapStroke)(p.x, p.y, false);
         })
@@ -529,8 +548,11 @@ export default function EditorScreen() {
       zoomScale,
       zoomX,
       zoomY,
-      canvasW,
-      canvasH,
+      frameX,
+      frameY,
+      frameW,
+      frameH,
+      drawEnabled,
       touchStartX,
       touchStartY,
       drawArmedAt,
@@ -576,12 +598,14 @@ export default function EditorScreen() {
             zoomScale.value,
             zoomX.value,
             zoomY.value,
-            canvasW.value,
-            canvasH.value,
+            frameX.value,
+            frameY.value,
+            frameW.value,
+            frameH.value,
           );
           runOnJS(dismissHit)(p.x, p.y);
         }),
-    [dismissHit, zoomScale, zoomX, zoomY, canvasW, canvasH],
+    [dismissHit, zoomScale, zoomX, zoomY, frameX, frameY, frameW, frameH],
   );
 
   const pinch = useMemo(
@@ -596,13 +620,23 @@ export default function EditorScreen() {
         .onUpdate((e) => {
           'worklet';
           const start = Math.max(zoomSavedScale.value, 1);
-          const next = Math.min(6, Math.max(1, start * e.scale));
+          const next = Math.min(4, Math.max(1, start * e.scale));
           const ratio = next / start;
-          const cx = canvasW.value / 2;
-          const cy = canvasH.value / 2;
+          const cx = frameX.value + frameW.value / 2;
+          const cy = frameY.value + frameH.value / 2;
           const tx = (1 - ratio) * (e.focalX - cx) + ratio * zoomSavedX.value;
           const ty = (1 - ratio) * (e.focalY - cy) + ratio * zoomSavedY.value;
-          const clamped = clampPan(next, tx, ty, canvasW.value, canvasH.value);
+          const clamped = clampPan(
+            next,
+            tx,
+            ty,
+            frameX.value,
+            frameY.value,
+            frameW.value,
+            frameH.value,
+            canvasW.value,
+            canvasH.value,
+          );
           zoomScale.value = next;
           zoomX.value = clamped.x;
           zoomY.value = clamped.y;
@@ -622,7 +656,7 @@ export default function EditorScreen() {
             zoomSavedY.value = zoomY.value;
           }
         }),
-    [zoomScale, zoomSavedScale, zoomX, zoomY, zoomSavedX, zoomSavedY, canvasW, canvasH],
+    [zoomScale, zoomSavedScale, zoomX, zoomY, zoomSavedX, zoomSavedY, frameX, frameY, frameW, frameH, canvasW, canvasH],
   );
 
   const panZoom = useMemo(
@@ -642,13 +676,17 @@ export default function EditorScreen() {
             zoomScale.value,
             zoomSavedX.value + e.translationX,
             zoomSavedY.value + e.translationY,
+            frameX.value,
+            frameY.value,
+            frameW.value,
+            frameH.value,
             canvasW.value,
             canvasH.value,
           );
           zoomX.value = clamped.x;
           zoomY.value = clamped.y;
         }),
-    [zoomScale, zoomX, zoomY, zoomSavedX, zoomSavedY, canvasW, canvasH],
+    [zoomScale, zoomX, zoomY, zoomSavedX, zoomSavedY, frameX, frameY, frameW, frameH, canvasW, canvasH],
   );
 
   const drawGesture = useMemo(
@@ -665,6 +703,17 @@ export default function EditorScreen() {
   }));
 
   useEffect(() => {
+    frameX.value = pageFit.offsetX;
+    frameY.value = pageFit.offsetY;
+    frameW.value = pageFit.renderWidth;
+    frameH.value = pageFit.renderHeight;
+  }, [pageFit, frameX, frameY, frameW, frameH]);
+
+  useEffect(() => {
+    drawEnabled.value = mode === 'manual';
+  }, [mode, drawEnabled]);
+
+  useEffect(() => {
     zoomScale.value = withTiming(1, { duration: 160 });
     zoomX.value = withTiming(0, { duration: 160 });
     zoomY.value = withTiming(0, { duration: 160 });
@@ -672,26 +721,6 @@ export default function EditorScreen() {
     zoomSavedX.value = 0;
     zoomSavedY.value = 0;
   }, [pageIndex, zoomScale, zoomX, zoomY, zoomSavedScale, zoomSavedX, zoomSavedY]);
-
-  useEffect(() => {
-    const rects = pageRedactions.map((redaction) => ({
-      x: redaction.rect.x,
-      y: redaction.rect.y,
-      width: redaction.rect.width,
-      height: redaction.rect.height,
-      style: redaction.style,
-    }));
-    if (draft) {
-      rects.push({
-        x: draft.x,
-        y: draft.y,
-        width: draft.width,
-        height: draft.height,
-        style: 'black',
-      });
-    }
-    viewerRef.current?.setOverlay(rects);
-  }, [pageRedactions, draft, pageIndex, reportedFit]);
 
   const onToggleFilter = useCallback((filter: RedactionFilterId) => {
     void Haptic.selection();
@@ -873,74 +902,117 @@ export default function EditorScreen() {
         <View style={styles.canvas} onLayout={onCanvasLayout}>
           <GestureDetector gesture={drawGesture}>
             <Animated.View style={styles.gestureSurface}>
-              <Animated.View style={[styles.zoomSurface, zoomStyle]} pointerEvents="none">
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.pageFrame,
+                  zoomStyle,
+                  {
+                    left: pageFit.offsetX,
+                    top: pageFit.offsetY,
+                    width: pageFit.renderWidth,
+                    height: pageFit.renderHeight,
+                  },
+                ]}
+              >
                 <PdfPageViewer
                   ref={viewerRef}
                   uri={activeUri}
                   pageIndex={pageIndex}
+                  style={StyleSheet.absoluteFill}
                   onTokensExtracted={onTokensExtracted}
-                onPageFit={(fit) => {
-                  setPageNatural((prev) =>
-                    prev.width === fit.pageWidth && prev.height === fit.pageHeight
-                      ? prev
-                      : { width: fit.pageWidth, height: fit.pageHeight },
-                  );
-                  setReportedFit((prev) => {
-                    if (
-                      prev &&
-                      Math.abs(prev.renderWidth - fit.renderWidth) < 0.5 &&
-                      Math.abs(prev.renderHeight - fit.renderHeight) < 0.5 &&
-                      Math.abs(prev.offsetX - fit.offsetX) < 0.5 &&
-                      Math.abs(prev.offsetY - fit.offsetY) < 0.5 &&
-                      Math.abs(prev.containerWidth - fit.containerWidth) < 0.5 &&
-                      Math.abs(prev.containerHeight - fit.containerHeight) < 0.5
-                    ) {
-                      return prev;
-                    }
-                    return fit;
-                  });
-                }}
+                  onPageFit={(fit) => {
+                    setPageNatural((prev) =>
+                      prev.width === fit.pageWidth && prev.height === fit.pageHeight
+                        ? prev
+                        : { width: fit.pageWidth, height: fit.pageHeight },
+                    );
+                  }}
                 />
+                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                  {pageRedactions.map((r) => {
+                    const box = mapPageRectToScreen(
+                      r.rect,
+                      {
+                        ...pageFit,
+                        offsetX: 0,
+                        offsetY: 0,
+                      },
+                      { padX: 0, padY: 0 },
+                    );
+                    return (
+                      <View
+                        key={r.id}
+                        style={[
+                          styles.rect,
+                          {
+                            left: box.left,
+                            top: box.top,
+                            width: box.width,
+                            height: box.height,
+                            backgroundColor:
+                              r.style === 'blur'
+                                ? 'rgba(90,90,90,0.92)'
+                                : REDACTION_STYLE_COLOR[r.style],
+                          },
+                        ]}
+                      />
+                    );
+                  })}
+                  {draft ? (
+                    <View
+                      style={[
+                        styles.rect,
+                        {
+                          left: draft.x * pageFit.renderWidth,
+                          top: draft.y * pageFit.renderHeight,
+                          width: draft.width * pageFit.renderWidth,
+                          height: draft.height * pageFit.renderHeight,
+                          backgroundColor: '#000000',
+                        },
+                      ]}
+                    />
+                  ) : null}
+                </View>
               </Animated.View>
             </Animated.View>
           </GestureDetector>
         </View>
 
-        <View style={styles.pageRow}>
-          <Pressable
-            disabled={pageIndex <= 0}
-            onPress={() => setPageIndex((p) => Math.max(0, p - 1))}
-            hitSlop={10}
-          >
-            <Ionicons
-              name="chevron-back"
-              size={22}
-              color={
-                pageIndex <= 0 ? AppleDS.labelQuaternary : AppleDS.labelPrimary
-              }
-            />
-          </Pressable>
-          <Text style={typography.captionMedium}>
-            Page {pageIndex + 1} / {pageCount}
-          </Text>
-          <Pressable
-            disabled={pageIndex >= pageCount - 1}
-            onPress={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-            hitSlop={10}
-          >
-            <Ionicons
-              name="chevron-forward"
-              size={22}
-              color={
-                pageIndex >= pageCount - 1
-                  ? AppleDS.labelQuaternary
-                  : AppleDS.labelPrimary
-              }
-            />
-          </Pressable>
-        </View>
-
         <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+          <View style={styles.pageRow}>
+            <Pressable
+              disabled={pageIndex <= 0}
+              onPress={() => setPageIndex((p) => Math.max(0, p - 1))}
+              hitSlop={10}
+            >
+              <Ionicons
+                name="chevron-back"
+                size={22}
+                color={
+                  pageIndex <= 0 ? AppleDS.labelQuaternary : AppleDS.labelPrimary
+                }
+              />
+            </Pressable>
+            <Text style={typography.captionMedium}>
+              Page {pageIndex + 1} / {pageCount}
+            </Text>
+            <Pressable
+              disabled={pageIndex >= pageCount - 1}
+              onPress={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+              hitSlop={10}
+            >
+              <Ionicons
+                name="chevron-forward"
+                size={22}
+                color={
+                  pageIndex >= pageCount - 1
+                    ? AppleDS.labelQuaternary
+                    : AppleDS.labelPrimary
+                }
+              />
+            </Pressable>
+          </View>
           <View style={styles.toolbarRow}>
             {(['smart', 'manual'] as RedactionMode[]).map((m) => (
               <Pressable
@@ -997,7 +1069,7 @@ export default function EditorScreen() {
             </Pressable>
           </View>
           <Text style={styles.dockHint}>
-            {REDACTION_STYLE_LABEL[style]} · Pinch to zoom · Drag to black out
+            {REDACTION_STYLE_LABEL[style]} · Select to remove · Pinch to zoom
           </Text>
         </View>
       </SafeAreaView>
@@ -1089,8 +1161,13 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'transparent',
   },
-  zoomSurface: {
-    ...StyleSheet.absoluteFillObject,
+  pageFrame: {
+    position: 'absolute',
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
+  },
+  rect: {
+    position: 'absolute',
   },
   dock: {
     paddingTop: 10,
