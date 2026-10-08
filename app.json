@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Redact PDF",
+    "name": "Redact PDF - Black Out Text",
     "slug": "redact-pdf",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "dark",
@@ -17,7 +17,7 @@
       "icon": "./assets/images/icon.png",
       "supportsTablet": false,
       "bundleIdentifier": "com.princemahlaba.redactpdf",
-      "buildNumber": "6",
+      "buildNumber": "16",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "RedactPDF needs photo access to import scanned documents for redaction.",
         "NSCameraUsageDescription": "RedactPDF can capture document photos for redaction.",
